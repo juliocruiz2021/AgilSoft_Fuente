@@ -1,0 +1,8 @@
+
+
+Error grave: código de excepción=C0000005 @ 12-06-2019 07:35:22. Archivo de registro de errores: C:\desarrollo vfp\AgilSoft Fuente\VFP9Rerr.log
+	Llamado desde -  imprimirfactura line 1626  {C:\desarrollo vfp\AgilSoft Fuente\varios.prg varios.fxp}
+	Llamado desde -  frm_ven_ventas_mod.grabar line 635  {c:\desarrollo vfp\agilsoft fuente\ventas\frm_ven_ventas_mod.sct c:\desarrollo vfp\agilsoft fuente\ventas\frm_ven_ventas_mod.sct}
+	Llamado desde -  frm_ven_ventas_mod.cmdaceptar1.click line 1  {c:\desarrollo vfp\agilsoft fuente\librerias\lib_principal.vct c:\desarrollo vfp\agilsoft fuente\librerias\lib_principal.vct}
+	Llamado desde -  principal line 242  {C:\desarrollo vfp\AgilSoft Fuente\principal.prg c:\desarrollo vfp\agilsoft fuente\sistema.exe}
+	Llamado desde -  principal2 line 134  {C:\desarrollo vfp\AgilSoft Fuente\principal2.prg c:\desarrollo vfp\agilsoft fuente\principal.exe}
