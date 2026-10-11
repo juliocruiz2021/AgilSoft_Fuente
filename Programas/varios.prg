@@ -189,6 +189,22 @@ FUNCTION IniciaForm
 		ENDIF
 		pcInvBlock=ALLTRIM(UPPER(pcInvBlock))
 		
+		
+		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"parametros","FamiliaCompraLocal") to pcFamiliaCompraLocal
+		if isnull(pcFamiliaCompraLocal)
+			pcFamiliaCompraLocal='211'
+			_EscribirIni(pcSysDir+pcDB+'\parametros.sys',"parametros","FamiliaCompraLocal",pcFamiliaCompraLocal)
+		ENDIF
+		pnFamiliaCompraLocal=val(pcFamiliaCompraLocal)
+		
+		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"parametros","MargenCompraLocal") to pcMargenCompraLocal
+		if isnull(pcMargenCompraLocal)
+			pcMargenCompraLocal='30'
+			_EscribirIni(pcSysDir+pcDB+'\parametros.sys',"parametros","MargenCompraLocal",pcMargenCompraLocal)
+		ENDIF
+		pnMargenCompraLocal=val(pcMargenCompraLocal)
+		
+		
 		***** sincronizacion web farmacia
 		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","link0") to pclink0
 		if isnull(pclink0)
@@ -207,7 +223,22 @@ FUNCTION IniciaForm
 			pclink2=''
 			_EscribirIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","link2",pclink2)
 		ENDIF
-				
+		
+		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","sincronizaIMapi") to pcsincronizaIMap
+		if isnull(pcsincronizaIMap)
+			pcsincronizaIMap='0'
+			_EscribirIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","sincronizaIMapi",pcsincronizaIMap)
+		ENDIF
+		pnsincronizaIMap=VAL(pcsincronizaIMap)
+
+		***** administrador central de documentos por empresa
+		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","usaSigaDocumentos") to pcUsaSigaDocumentos
+		if isnull(pcUsaSigaDocumentos)
+			pcUsaSigaDocumentos='0'
+			_EscribirIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","usaSigaDocumentos",pcUsaSigaDocumentos)
+		ENDIF
+		pnUsaSigaDocumentos=IIF(VAL(pcUsaSigaDocumentos)=1,1,0)
+		
 		store _LeerIni(pcSysDir+pcDB+'\parametros.sys',"SetupWeb","link3") to pclink3
 		if isnull(pclink3)
 			pclink3=''
@@ -3895,6 +3926,26 @@ pcRastrear=pcRastrear+'Imprimir Fac- 7 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						GO TOP IN c_impdeta
 						GO TOP IN c_imp
 						
+						* SIGA Documentos: generar y encolar el soporte de la venta.
+						IF TYPE("pnUsaSigaDocumentos") = "N"
+							IF pnUsaSigaDocumentos = 1 AND ;
+									TYPE("lcNombreArchivoPDF") = "C" AND ;
+									!EMPTY(ALLTRIM(lcNombreArchivoPDF))
+								IF !FILE(lcNombreArchivoPDF) AND ;
+										TYPE("lcArchivo") = "C" AND ;
+										FILE(pcSysDir+pcdb+"\formatos\"+;
+										IIF(EMPTY(lcFormatoPDF),lcArchivo,lcFormatoPDF))
+									=GenerarArchivoPDF_DTE(pcSysDir+pcdb+"\formatos\"+;
+										IIF(EMPTY(lcFormatoPDF),lcArchivo,lcFormatoPDF),;
+										lcNombreArchivoPDF)
+								ENDIF
+								IF FILE(lcNombreArchivoPDF)
+									=PublicarVentaSigaDocumentos(lnIdDocto, ;
+										lcNombreArchivoPDF)
+								ENDIF
+							ENDIF
+						ENDIF
+						
 						IF !EMPTY(lcPrinOld)
 							SET PRINTER TO NAME (lcPrinOld)
 						ENDIF 
@@ -3983,8 +4034,12 @@ FUNCTION ImprimirFacturaCompra(lnIdDocto as Integer,lnCtrl as Integer ,lnIdConec
 
 	IF lnidSQL>0
 		lcPrintActual=SET("PRINTER", 3)
+		** correccion para entregar al formato CRET la actividad y nombre comercial del sujeto de retencion *****
 		lcComando0="SELECT t1.*,t12.telcontacto,t12.celcontacto,t12.telefono,t12.celular,t3.cod as CodVendedor,t3.nombre as Vendedor,t4.TipoDocto,t4.clave,"+;
 						"t5.serie,t5.prefijo,t5.tiraje,t5.resolucion,t5.autorizacion,t5.fecatuorizacion,t12.correodte,"+;
+						"t12.codgiro as codactividadreceptor,t12.giro as actividadreceptor,t12.nombrenegocio as nombrecomercialreceptor,"+;
+						"IIF(!EMPTY(ALLTRIM(t12.pasaporte)),'Pasaporte',IIF(!EMPTY(ALLTRIM(t12.otro)),'Otro',IIF(!EMPTY(ALLTRIM(t1.nit)),'NIT','DUI'))) as tipoDocumentoReceptor,"+;
+						"IIF(!EMPTY(ALLTRIM(t12.pasaporte)),t12.pasaporte,IIF(!EMPTY(ALLTRIM(t12.otro)),t12.otro,IIF(!EMPTY(ALLTRIM(t1.nit)),t1.nit,t1.dui))) as numeroDocumentoReceptor,"+;
 						"t7.cod as coddepartamento,t7.nombre as departamento,t8.cod as codmunicipio,t8.nombre as municipio,"+;
 						"t9.cod as codSucursal,t9.nombre as sucursal,t9.notas as direccionsuc,t9.codDepartamento as codDepartamentoSuc,t9.codMunicipio as codMunicipioSuc,"+;
 						"t9.telefono as telefonosuc,t9.correo as correosuc,"+;
@@ -4292,7 +4347,8 @@ FUNCTION ImprimirFacturaCompra(lnIdDocto as Integer,lnCtrl as Integer ,lnIdConec
 									INTO CURSOR c_impdeta READWRITE ORDER BY t0.iddoctod
 							ENDIF 
 						ENDIF 
-						SELECT 000000000 as lineas,* FROM c_impdeta INTO CURSOR c_impdetaTmp
+						** correccion para imprimir el IVA retenido por renglon en el DTE CRET *****
+						SELECT 000000000 as lineas,000000000.00 as ivaRetenidoCRET,* FROM c_impdeta INTO CURSOR c_impdetaTmp
 						SELECT * FROM c_impdetaTmp INTO CURSOR c_impdeta READWRITE 
 						
 						USE IN c_impdetaTmp
@@ -4300,6 +4356,22 @@ FUNCTION ImprimirFacturaCompra(lnIdDocto as Integer,lnCtrl as Integer ,lnIdConec
 
 						SELECT c_impdeta
 						REPLACE lineas WITH RECNO() all
+						** correccion para que la suma del detalle CRET coincida exactamente con la retencion del encabezado *****
+						IF c_imp.tipoicv=6 AND c_imp.tipoiva=4
+							lnIvaRetenidoAcumCRET=0
+							COUNT FOR totalnosujetog>0 TO lnItemsCRET
+							lnItemCRET=0
+							SCAN FOR totalnosujetog>0
+								lnItemCRET=lnItemCRET+1
+								IF lnItemCRET=lnItemsCRET
+									lnIvaRetenidoItemCRET=ROUND(c_imp.retperdocto-lnIvaRetenidoAcumCRET,2)
+								ELSE
+									lnIvaRetenidoItemCRET=ROUND(totalnosujetog*c_imp.porretper/100,2)
+									lnIvaRetenidoAcumCRET=lnIvaRetenidoAcumCRET+lnIvaRetenidoItemCRET
+								ENDIF
+								REPLACE ivaRetenidoCRET WITH lnIvaRetenidoItemCRET
+							ENDSCAN
+						ENDIF
 						GO top
 						lnlintotal=RECCOUNT()
 						lniddoc=iddocto
@@ -6515,6 +6587,7 @@ FUNCTION CrearCursorStatus(lnOp,lcCursor,lcTodos)
 				INSERT INTO (lcCursor) VALUES (1,'Gravado')
 				INSERT INTO (lcCursor) VALUES (2,'No sujeto')
 				INSERT INTO (lcCursor) VALUES (3,'Tasa Cero')
+				INSERT INTO (lcCursor) VALUES (4,'Ret. IVA')
 				
 			CASE lnOp=21		&&& Tipo de cuentas bancarias
 				INSERT INTO (lcCursor) VALUES (1,'Caja')
@@ -9085,9 +9158,6 @@ FUNCTION _generaPartidaventas(lnsqlid,lnidDoc,lnTipConec)
 							lcNumpar=ctbpartidas.numeropartida
 						ELSE
 							IF SEEK(lnidDoc,"ctbpartidas","idpartida")
-								LOCATE REST FOR origen=lcOrigenDoc WHILE idpartida=lnidDoc IN ctbpartidas
-							ENDIF
-							IF FOUND("ctbpartidas")
 								llPartidaNueva=.f.
 								lcNumpar=ctbpartidas.numeropartida
 							ELSE
@@ -11604,28 +11674,33 @@ FUNCTION ExistenciaProductoSerie(lnIdCt,lnidproducto,lnidmedida,lnidbodega,lcser
 ENDFUNC 
 
 
-FUNCTION AplicarRetencionPercepcion(lnTipoEmpresa as Integer,lnTiposocneg as Integer,lnTipocontri as Integer,lnCon1 as Integer,lnTipoConec)
-	lnIdSqlCtaBuscar=lnCon1
-	lcfaliasCtaBus=ALIAS()
-	lnAplicatiporetper=0
+FUNCTION AplicarRetencionPercepcion(lnTipoEmpresa as Integer,lnTiposocneg as Integer,lnTipocontri as Integer,lnCon1 as Integer,lnTipoConec,lntipoivaret)
+	IF PCOUNT()>=6
+		lnAplicatiporetper=c_cyvcompras.tipoiva
+	ELSE 
+		lnIdSqlCtaBuscar=lnCon1
+		lcfaliasCtaBus=ALIAS()
+		lnAplicatiporetper=0
 
-	lctopbusn=IIF(lnTipoConec<>2,"top 1","")
-	lclimbusn=IIF(lnTipoConec=2,"Limit 0,1","")
+		lctopbusn=IIF(lnTipoConec<>2,"top 1","")
+		lclimbusn=IIF(lnTipoConec=2,"Limit 0,1","")
 
-	IF lnIdSqlCtaBuscar>0	&&&& Coneccion Establecida
-		lcComandoBuscarCta='SELECT '+lctopbusn+' tiporetper,editable,porcentaje FROM cyvguiaretper '+;
-								'where tipoempresa='+ALLTRIM(STR(lnTipoEmpresa))+' and tiposocionegocio='+ALLTRIM(STR(lnTiposocneg))+' and tipocontribuyente='+ALLTRIM(STR(lnTipocontri))+' order by idguiaretper '+lclimbusn+' '
-		lnCtrlSqlCtaBus=miSQLEXEC(lnIdSqlCtaBuscar,lcComandoBuscarCta,"c_AplicaRetPer")
-		IF lnCtrlSqlCtaBus>0
-			lnAplicatiporetper=c_AplicaRetPer.tiporetper
+		IF lnIdSqlCtaBuscar>0	&&&& Coneccion Establecida
+			lcComandoBuscarCta='SELECT '+lctopbusn+' tiporetper,editable,porcentaje FROM cyvguiaretper '+;
+									'where tipoempresa='+ALLTRIM(STR(lnTipoEmpresa))+' and tiposocionegocio='+ALLTRIM(STR(lnTiposocneg))+' and tipocontribuyente='+ALLTRIM(STR(lnTipocontri))+' order by idguiaretper '+lclimbusn+' '
+			lnCtrlSqlCtaBus=miSQLEXEC(lnIdSqlCtaBuscar,lcComandoBuscarCta,"c_AplicaRetPer")
+			IF lnCtrlSqlCtaBus>0
+				lnAplicatiporetper=c_AplicaRetPer.tiporetper
+			ENDIF 
 		ENDIF 
+
+		USE IN c_AplicaRetPer
+		
+		IF !EMPTY(lcfaliasCtaBus)
+			SELECT (lcfaliasCtaBus)
+		ENDIF
 	ENDIF 
 
-	USE IN c_AplicaRetPer
-	
-	IF !EMPTY(lcfaliasCtaBus)
-		SELECT (lcfaliasCtaBus)
-	ENDIF 
 	RETURN lnAplicatiporetper
 ENDFUNC 
 
@@ -40008,7 +40083,8 @@ FUNCTION ProcessSheet(loWorkbook, tcSheetName, tcCursorName, tnStartRow, tcValid
     		lnvaltmp=VAL(STRTRAN(lnvaltmp,'$',''))
     	ENDIF 
 
-        IF type("lnvaltmp")='N' AND lnvaltmp<>0
+        ** correccion importacion GANO: aceptar importes numericos (N) y monetarios (Y) *****
+        IF INLIST(TYPE("lnvaltmp"),'N','Y') AND lnvaltmp<>0
             APPEND BLANK
             FOR lnCol = 1 TO MIN(20, lnLastCol)
                 TRY
@@ -40016,15 +40092,17 @@ FUNCTION ProcessSheet(loWorkbook, tcSheetName, tcCursorName, tnStartRow, tcValid
                 	IF INLIST(lnCol,2,9) AND UPPER(tcSheetName)='RESUMEN'
                 		lcCellValue = ""  && Reemplazar por un valor predeterminado
 					ELSE
-	                    lcCellValue = ALLTRIM(TRANSFORM(loSheet.Cells(lnRow, lnCol).Value))
+	                    ** correccion importacion GANO: las celdas opcionales nulas se importan como texto vacio *****
+	                    IF ISNULL(loSheet.Cells(lnRow, lnCol).Value)
+	                        lcCellValue = ""
+	                    ELSE
+	                        lcCellValue = ALLTRIM(TRANSFORM(loSheet.Cells(lnRow, lnCol).Value))
+	                    ENDIF
                 	ENDIF
                 	
                     * Validación de datos
-                    IF ISNULL(loSheet.Cells(lnRow, lnCol).Value)
-                        lnErrors = lnErrors + 1
-                        MESSAGEBOX("Dato nulo encontrado en: " + tcSheetName + "!R" + TRANSFORM(lnRow) + "C" + TRANSFORM(lnCol), 16, "Error")
-                    ELSE
-                        IF VARTYPE(loSheet.Cells(lnRow, lnCol).Value) == "N" AND loSheet.Cells(lnRow, lnCol).Value < 0
+                    IF !ISNULL(loSheet.Cells(lnRow, lnCol).Value)
+                        IF INLIST(VARTYPE(loSheet.Cells(lnRow, lnCol).Value), "N", "Y") AND loSheet.Cells(lnRow, lnCol).Value < 0
                             lnErrors = lnErrors + 1
                             MESSAGEBOX("Valor negativo encontrado en: " + tcSheetName + "!R" + TRANSFORM(lnRow) + "C" + TRANSFORM(lnCol), 16, "Error")
                         ENDIF
@@ -43143,6 +43221,199 @@ ENDFUNC
 
 
 
+FUNCTION _ValidarSisVinculos
+    LOCAL lcRutaDatos, lcDatabase, lcTabla
+    LOCAL lcError, llCreada
+
+    lcRutaDatos = ADDBS(pcSysDir + pcdb)
+    lcDatabase  = lcRutaDatos + "masterdb.dbc"
+    lcTabla     = lcRutaDatos + "sisVinculos.dbf"
+    lcError     = ""
+    llCreada    = .F.
+
+    IF FILE(lcTabla)
+        RETURN .T.
+    ENDIF
+
+    TRY
+        IF USED("sisVinculos")
+            USE IN sisVinculos
+        ENDIF
+
+        OPEN DATABASE (lcDatabase) SHARED
+
+        WAIT WINDOW ;
+            "Agregando tabla de vínculos documentales..." ;
+            NOWAIT
+
+        CREATE TABLE (lcTabla) ;
+            ( idvinc    I AUTOINC NEXTVALUE 1 STEP 1 PRIMARY KEY, ;
+              iddoc     C(36)  NOT NULL, ;
+              origen    C(10)  NOT NULL, ;
+              iddocto   I      NOT NULL, ;
+              idclipro  I      NOT NULL, ;
+              idarchivo C(36)  NOT NULL, ;
+              urlarchivo M     NOT NULL, ;
+              nomarchivo C(180) NOT NULL, ;
+              mimetype  C(100) NOT NULL, ;
+              sha256    C(64)  NOT NULL, ;
+              tamanoby  N(18,0) NOT NULL, ;
+              tipoent   C(20)  NOT NULL, ;
+              identidad C(40)  NOT NULL, ;
+              naturalez C(20)  NOT NULL, ;
+              tipodoc   C(30)  NOT NULL, ;
+              titulo    C(120) NOT NULL, ;
+              fechadoc  D      NULL, ;
+              idusuario I      NOT NULL, ;
+              fechacrea T      NOT NULL, ;
+              estado    C(15)  NOT NULL, ;
+              intentos  I      NOT NULL, ;
+              ultsync   T      NULL, ;
+              ulterror  M      NOT NULL, ;
+              activo    L      NOT NULL )
+
+        INDEX ON ;
+            UPPER(PADR(ALLTRIM(tipoent), 20) + ;
+                  PADR(ALLTRIM(identidad), 40)) ;
+            TAG entidad
+
+        INDEX ON iddoc TAG iddoc
+
+        INDEX ON UPPER(PADR(ALLTRIM(origen), 10)) + ;
+            PADL(ALLTRIM(STR(iddocto)), 12, "0") TAG docorigen
+
+        INDEX ON PADL(ALLTRIM(STR(idclipro)), 12, "0") TAG idclipro
+
+        INDEX ON idarchivo TAG idarchivo
+
+        INDEX ON ;
+            UPPER(PADR(ALLTRIM(estado), 15)) + ;
+            TTOC(fechacrea, 1) ;
+            TAG estado
+
+        USE IN sisVinculos
+        llCreada = .T.
+
+    CATCH TO loError
+        lcError = ;
+            "No se pudo crear sisVinculos: " + ;
+            loError.Message
+
+        IF USED("sisVinculos")
+            USE IN sisVinculos
+        ENDIF
+
+        MESSAGEBOX(lcError, 16, "SIGA Documentos")
+        llCreada = .F.
+
+    FINALLY
+        WAIT CLEAR
+    ENDTRY
+
+    RETURN llCreada
+ENDFUNC
+
+
+FUNCTION _ValidarSisVinculosCamposNube
+    LOCAL lcRutaTabla, lcAliasAnterior, llOk, llExiste, lnCampo, loError
+
+    lcRutaTabla = ADDBS(pcSysDir + pcDB) + "sisVinculos.dbf"
+    lcAliasAnterior = ALIAS()
+    llOk = .F.
+    llExiste = .F.
+
+    IF !FILE(lcRutaTabla)
+        MESSAGEBOX("No existe sisVinculos. Ejecute primero _ValidarSisVinculos().", 16, "SIGA Documentos")
+        RETURN .F.
+    ENDIF
+
+    IF USED("cSisVincVal")
+        USE IN cSisVincVal
+    ENDIF
+    USE (lcRutaTabla) SHARED AGAIN IN 0 ALIAS cSisVincVal
+    SELECT cSisVincVal
+    FOR lnCampo = 1 TO FCOUNT()
+        IF UPPER(ALLTRIM(FIELD(lnCampo))) == "TAMANOBY"
+            llExiste = .T.
+            EXIT
+        ENDIF
+    ENDFOR
+    USE IN cSisVincVal
+
+    IF llExiste
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+        RETURN .T.
+    ENDIF
+
+    TRY
+        IF USED("sisVinculos")
+            USE IN sisVinculos
+        ENDIF
+
+        WAIT WINDOW "Actualizando vinculos de SIGA Documentos..." NOWAIT
+        USE (lcRutaTabla) EXCLUSIVE IN 0 ALIAS sisVinculos
+        SELECT sisVinculos
+
+        IF TYPE("sisVinculos.origen") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN origen C(10) DEFAULT ''
+        ENDIF
+        IF TYPE("sisVinculos.iddocto") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN iddocto I DEFAULT 0
+        ENDIF
+        IF TYPE("sisVinculos.idclipro") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN idclipro I DEFAULT 0
+        ENDIF
+        IF TYPE("sisVinculos.idarchivo") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN idarchivo C(36) DEFAULT ''
+        ENDIF
+        IF TYPE("sisVinculos.urlarchivo") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN urlarchivo M
+        ENDIF
+        IF TYPE("sisVinculos.nomarchivo") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN nomarchivo C(180) DEFAULT ''
+        ENDIF
+        IF TYPE("sisVinculos.mimetype") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN mimetype C(100) DEFAULT ''
+        ENDIF
+        IF TYPE("sisVinculos.sha256") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN sha256 C(64) DEFAULT ''
+        ENDIF
+
+        SELECT sisVinculos
+        IF TAGNO("docorigen", "sisVinculos") = 0
+            INDEX ON UPPER(PADR(ALLTRIM(origen), 10)) + ;
+                PADL(ALLTRIM(STR(iddocto)), 12, "0") TAG docorigen
+        ENDIF
+        IF TAGNO("idclipro", "sisVinculos") = 0
+            INDEX ON PADL(ALLTRIM(STR(idclipro)), 12, "0") TAG idclipro
+        ENDIF
+        IF TAGNO("idarchivo", "sisVinculos") = 0
+            INDEX ON idarchivo TAG idarchivo
+        ENDIF
+
+        * Campo testigo: se crea al final de toda la migracion.
+        IF TYPE("sisVinculos.tamanoby") = "U"
+            ALTER TABLE sisVinculos ADD COLUMN tamanoby N(18,0) DEFAULT 0
+        ENDIF
+
+        llOk = .T.
+    CATCH TO loError
+        MESSAGEBOX("No se pudo actualizar sisVinculos: " + loError.Message, 16, "SIGA Documentos")
+        llOk = .F.
+    FINALLY
+        IF USED("sisVinculos")
+            USE IN sisVinculos
+        ENDIF
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+        WAIT CLEAR
+    ENDTRY
+
+    RETURN llOk
+ENDFUNC
 
 
 FUNCTION _ValidarInvProductosCompraLocal()
@@ -43436,7 +43707,7 @@ FUNCTION OfrecerCambioClaveAlIngresar
         "scula, un n" + CHR(250) + "mero y un s" + CHR(237) + "mbolo." + CHR(13) + ;
         "No debe contener espacios ni ser igual al usuario." + CHR(13) + CHR(13) + ;
         "Se recomienda cambiarla. " + CHR(191) + "Desea hacerlo en este momento?"
-    lnRespuesta = MESSAGEBOX(lcAviso, 4 + 48 + 256, "Seguridad de la contrase" + CHR(241) + "a")
+    lnRespuesta = MESSAGEBOX(lcAviso, 4 + 48 , "Seguridad de la contrase" + CHR(241) + "a")
     IF lnRespuesta <> 6
         RETURN .T.
     ENDIF
@@ -43507,4 +43778,579 @@ FUNCTION OfrecerCambioClaveAlIngresar
         ENDIF
     ENDIF
     RETURN .T.
+ENDFUNC
+
+
+************************************************************
+* JSON de una venta para integracion con Gestion Interna.
+* Genera encabezado e items y permite enviarlos a Gestion Interna.
+************************************************************
+
+FUNCTION EnviarJsonGestionInterna
+	LPARAMETERS tnIdDocto, tcOrigen, tcLlaveSiga, tlPrueba
+
+	LOCAL lcUrl, lcLlave, lcArchivoLlave, lcJson, lcRespuesta
+	LOCAL loHttp, loStream, luCuerpo, loError, loResultado, llPrueba
+
+	loResultado = CREATEOBJECT("Empty")
+	ADDPROPERTY(loResultado, "ok", .F.)
+	ADDPROPERTY(loResultado, "statusHttp", 0)
+	ADDPROPERTY(loResultado, "mensaje", "")
+	ADDPROPERTY(loResultado, "respuesta", "")
+	ADDPROPERTY(loResultado, "jsonEnviado", "")
+
+	lcUrl = "https://nqrvllxqhfpskpkknztz.supabase.co/functions/v1/recibir-factura"
+	lcLlave = ""
+	llPrueba = .F.
+
+	IF VARTYPE(tcLlaveSiga) = "C"
+		lcLlave = ALLTRIM(tcLlaveSiga)
+	ENDIF
+	IF VARTYPE(tlPrueba) = "L"
+		llPrueba = tlPrueba
+	ENDIF
+
+	IF EMPTY(lcLlave) AND TYPE("pcSysDir") = "C" AND TYPE("pcdb") = "C"
+		lcArchivoLlave = pcSysDir + pcdb + "\gestion_interna.key"
+		IF FILE(lcArchivoLlave)
+			lcLlave = ALLTRIM(STRTRAN(STRTRAN(FILETOSTR(lcArchivoLlave), CHR(13), ""), CHR(10), ""))
+		ENDIF
+	ENDIF
+
+	IF EMPTY(lcLlave)
+		loResultado.mensaje = "No se configuro la llave x-llave-siga en gestion_interna.key."
+		RETURN loResultado
+	ENDIF
+
+	lcJson = GenerarJsonDocumentoUniversal(tnIdDocto, tcOrigen, llPrueba)
+	loResultado.jsonEnviado = lcJson
+	IF EMPTY(lcJson) OR '"error":true' $ LOWER(lcJson)
+		loResultado.mensaje = "No fue posible generar el JSON de la factura."
+		loResultado.respuesta = lcJson
+		RETURN loResultado
+	ENDIF
+
+	TRY
+		* Se envia el cuerpo como UTF-8 sin BOM para conservar tildes y caracteres especiales.
+		loStream = CREATEOBJECT("ADODB.Stream")
+		loStream.Type = 2
+		loStream.Charset = "utf-8"
+		loStream.Open()
+		loStream.WriteText(lcJson)
+		loStream.Position = 0
+		loStream.Type = 1
+		loStream.Position = 3
+		luCuerpo = loStream.Read()
+		loStream.Close()
+
+		loHttp = CREATEOBJECT("MSXML2.ServerXMLHTTP.6.0")
+		loHttp.setTimeouts(10000, 10000, 15000, 15000)
+		loHttp.Open("POST", lcUrl, .F.)
+		loHttp.setRequestHeader("Content-Type", "application/json; charset=utf-8")
+		loHttp.setRequestHeader("x-llave-siga", lcLlave)
+		loHttp.Send(luCuerpo)
+
+		loResultado.statusHttp = loHttp.Status
+		lcRespuesta = ALLTRIM(loHttp.responseText)
+		loResultado.respuesta = lcRespuesta
+		IF loHttp.Status = 200
+			loResultado.ok = .T.
+			loResultado.mensaje = "Factura enviada a Gestion Interna."
+		ELSE
+			loResultado.mensaje = "La API respondio HTTP " + TRANSFORM(loHttp.Status) + "."
+		ENDIF
+	CATCH TO loError
+		loResultado.mensaje = "No fue posible conectar con Gestion Interna: " + loError.Message
+	ENDTRY
+
+	RETURN loResultado
+ENDFUNC
+
+
+FUNCTION GenerarJsonDocumentoUniversal
+	LPARAMETERS tnIdDocto, tcOrigen, tlPrueba
+
+	LOCAL lnIdDocto, lcOrigen, lcAliasAnterior, lcJson, lcItems
+	LOCAL lcCelular, lcTipoIdentificacion, lcNumeroIdentificacion
+	LOCAL lcComa, llPrueba, loError
+
+	lnIdDocto = NVL(tnIdDocto, 0)
+	lcOrigen = UPPER(ALLTRIM(NVL(tcOrigen, "")))
+	lcAliasAnterior = ALIAS()
+	lcJson = ""
+	llPrueba = .F.
+	IF PCOUNT() >= 3 AND VARTYPE(tlPrueba) = "L"
+		llPrueba = tlPrueba
+	ENDIF
+
+	TRY
+		IF lnIdDocto <= 0
+			ERROR "El iddocto debe ser mayor que cero."
+		ENDIF
+		IF lcOrigen <> "VTA"
+			ERROR "Esta version admite documentos con origen VTA."
+		ENDIF
+		IF TYPE("pcSysDir") <> "C" OR TYPE("pcdb") <> "C"
+			ERROR "No esta disponible la ruta de la empresa activa."
+		ENDIF
+
+		_JsonVentaCerrarCursores()
+
+		USE (pcSysDir + pcdb + "\cyvVentas") IN 0 SHARED AGAIN ALIAS c_JV_Ventas
+		USE (pcSysDir + pcdb + "\cyvVentasDeta") IN 0 SHARED AGAIN ALIAS c_JV_Detalle
+		USE (pcSysDir + pcdb + "\sisTipoDoctos") IN 0 SHARED AGAIN ALIAS c_JV_TipoDoc
+		USE (pcSysDir + pcdb + "\cyvCliPro") IN 0 SHARED AGAIN ALIAS c_JV_Cliente
+		USE (pcSysDir + pcdb + "\sisCata") IN 0 SHARED AGAIN ALIAS c_JV_Sucursal
+
+		SELECT a.iddocto, a.origen, a.numero, a.fechadocto, a.totaldocto, ;
+			a.clipro AS nombreCliente, a.celular AS celularDocumento, a.dui, a.nit, a.nrc, ;
+			NVL(t.clave, "") AS tipoDocumento, ;
+			NVL(c.celular, "") AS celularCliente, ;
+			NVL(c.telefono, "") AS telefonoCliente, ;
+			NVL(s.nombre, "") AS nombreSucursal ;
+		FROM c_JV_Ventas a ;
+		LEFT JOIN c_JV_TipoDoc t ON a.idtipodocto = t.idtipodocto ;
+		LEFT JOIN c_JV_Cliente c ON a.idclipro = c.idclipro ;
+		LEFT JOIN c_JV_Sucursal s ON a.idsucursal = s.id AND s.origen = "SUC" ;
+		WHERE a.iddocto = m.lnIdDocto AND UPPER(ALLTRIM(a.origen)) = m.lcOrigen ;
+		INTO CURSOR c_JV_Encabezado READWRITE
+
+		IF RECCOUNT("c_JV_Encabezado") = 0
+			ERROR "No se encontro la factura solicitada."
+		ENDIF
+		SELECT c_JV_Encabezado
+		GO TOP
+
+		SELECT iddoctod, producto, cantiunimed, precioconivaunidad ;
+		FROM c_JV_Detalle ;
+		WHERE iddocto = m.lnIdDocto AND eliminado = 0 ;
+		ORDER BY iddoctod ;
+		INTO CURSOR c_JV_Items READWRITE
+
+		lcItems = "["
+		lcComa = ""
+		SELECT c_JV_Items
+		SCAN
+			lcItems = lcItems + lcComa + "{" + ;
+				'"descripcion":' + _JsonVentaTexto(c_JV_Items.producto) + "," + ;
+				'"cantidad":' + _JsonVentaNumero(c_JV_Items.cantiunimed, 8) + "," + ;
+				'"precio":' + _JsonVentaNumero(c_JV_Items.precioconivaunidad, 8) + ;
+			"}"
+			lcComa = ","
+		ENDSCAN
+		lcItems = lcItems + "]"
+
+		SELECT c_JV_Encabezado
+		lcCelular = ALLTRIM(NVL(c_JV_Encabezado.celularDocumento, ""))
+		IF EMPTY(lcCelular)
+			lcCelular = ALLTRIM(NVL(c_JV_Encabezado.celularCliente, ""))
+		ENDIF
+		IF EMPTY(lcCelular)
+			lcCelular = ALLTRIM(NVL(c_JV_Encabezado.telefonoCliente, ""))
+		ENDIF
+
+		lcTipoIdentificacion = ""
+		lcNumeroIdentificacion = ""
+		IF !EMPTY(ALLTRIM(NVL(c_JV_Encabezado.nrc, "")))
+			lcTipoIdentificacion = "nrc"
+			lcNumeroIdentificacion = ALLTRIM(c_JV_Encabezado.nrc)
+		ELSE
+			IF !EMPTY(ALLTRIM(NVL(c_JV_Encabezado.dui, "")))
+				lcTipoIdentificacion = "dui"
+				lcNumeroIdentificacion = ALLTRIM(c_JV_Encabezado.dui)
+			ELSE
+				IF !EMPTY(ALLTRIM(NVL(c_JV_Encabezado.nit, "")))
+					lcTipoIdentificacion = "nit"
+					lcNumeroIdentificacion = ALLTRIM(c_JV_Encabezado.nit)
+				ENDIF
+			ENDIF
+		ENDIF
+
+		lcJson = "{" + ;
+			'"iddocto":' + _JsonVentaNumero(c_JV_Encabezado.iddocto, 0) + "," + ;
+			'"nombre_cliente":' + _JsonVentaTexto(c_JV_Encabezado.nombreCliente) + "," + ;
+			'"celular_cliente":' + _JsonVentaTexto(lcCelular) + "," + ;
+			'"identificacion":{' + ;
+				'"tipo":' + _JsonVentaTexto(lcTipoIdentificacion) + "," + ;
+				'"numero":' + _JsonVentaTexto(lcNumeroIdentificacion) + ;
+			'},' + ;
+			'"factura":' + _JsonVentaTexto(c_JV_Encabezado.numero) + "," + ;
+			'"tipo_documento":' + _JsonVentaTexto(c_JV_Encabezado.tipoDocumento) + "," + ;
+			'"fecha_factura":' + _JsonVentaFecha(c_JV_Encabezado.fechadocto) + "," + ;
+			'"sucursal":' + _JsonVentaTexto(c_JV_Encabezado.nombreSucursal) + "," + ;
+			'"monto_factura":' + _JsonVentaNumero(c_JV_Encabezado.totaldocto, 2) + "," + ;
+			'"items":' + lcItems + "," + ;
+			'"prueba":' + IIF(llPrueba, "true", "false") + ;
+		"}"
+
+	CATCH TO loError
+		lcJson = "{" + ;
+			'"error":true,' + ;
+			'"mensaje":' + _JsonVentaTexto(loError.Message) + ;
+		"}"
+	FINALLY
+		_JsonVentaCerrarCursores()
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN lcJson
+ENDFUNC
+
+
+FUNCTION _JsonVentaTexto
+	LPARAMETERS tuValor
+	LOCAL lcTexto, lnControl
+
+	IF ISNULL(tuValor)
+		RETURN '""'
+	ENDIF
+
+	lcTexto = ALLTRIM(TRANSFORM(tuValor))
+	lcTexto = STRTRAN(lcTexto, "\", "\\")
+	lcTexto = STRTRAN(lcTexto, '"', '\"')
+	lcTexto = STRTRAN(lcTexto, CHR(8), "\b")
+	lcTexto = STRTRAN(lcTexto, CHR(9), "\t")
+	lcTexto = STRTRAN(lcTexto, CHR(10), "\n")
+	lcTexto = STRTRAN(lcTexto, CHR(12), "\f")
+	lcTexto = STRTRAN(lcTexto, CHR(13), "\r")
+	FOR lnControl = 0 TO 31
+		IF !INLIST(lnControl, 8, 9, 10, 12, 13)
+			lcTexto = STRTRAN(lcTexto, CHR(lnControl), "")
+		ENDIF
+	ENDFOR
+
+	RETURN '"' + lcTexto + '"'
+ENDFUNC
+
+
+FUNCTION _JsonVentaFecha
+	LPARAMETERS tdFecha
+	LOCAL lcFecha
+	IF ISNULL(tdFecha) OR EMPTY(tdFecha)
+		RETURN '""'
+	ENDIF
+	lcFecha = DTOS(tdFecha)
+	RETURN '"' + LEFT(lcFecha, 4) + "-" + SUBSTR(lcFecha, 5, 2) + "-" + RIGHT(lcFecha, 2) + '"'
+ENDFUNC
+
+
+FUNCTION _JsonVentaNumero
+	LPARAMETERS tnNumero, tnDecimales
+	LOCAL lcNumero, lnDecimales
+	IF ISNULL(tnNumero)
+		RETURN "0"
+	ENDIF
+	lnDecimales = MAX(0, MIN(8, NVL(tnDecimales, 2)))
+	lcNumero = ALLTRIM(STR(tnNumero, 30, lnDecimales))
+	lcNumero = STRTRAN(lcNumero, SET("POINT"), ".")
+	IF "." $ lcNumero
+		DO WHILE RIGHT(lcNumero, 1) = "0"
+			lcNumero = LEFT(lcNumero, LEN(lcNumero) - 1)
+		ENDDO
+		IF RIGHT(lcNumero, 1) = "."
+			lcNumero = LEFT(lcNumero, LEN(lcNumero) - 1)
+		ENDIF
+	ENDIF
+	RETURN IIF(EMPTY(lcNumero), "0", lcNumero)
+ENDFUNC
+
+
+FUNCTION _JsonVentaCerrarCursores()
+	LOCAL ARRAY laAlias[7]
+	LOCAL lnAlias
+	laAlias[1] = "c_JV_Encabezado"
+	laAlias[2] = "c_JV_Items"
+	laAlias[3] = "c_JV_Ventas"
+	laAlias[4] = "c_JV_Detalle"
+	laAlias[5] = "c_JV_TipoDoc"
+	laAlias[6] = "c_JV_Cliente"
+	laAlias[7] = "c_JV_Sucursal"
+	FOR lnAlias = 1 TO ALEN(laAlias, 1)
+		IF USED(laAlias[lnAlias])
+			USE IN (laAlias[lnAlias])
+		ENDIF
+	ENDFOR
+	RETURN .T.
+ENDFUNC
+
+
+************************************************************
+* Estado de sincronizacion con API de Importadora Marroquin.
+* statusApiIM: 0=pendiente, 1=recibido por la API.
+************************************************************
+
+FUNCTION _ValidarVentasStatusApiIM
+	LOCAL llExiste, llOk, lnCampo, lcAliasAnterior, lcTabla, lcDBC, lcError
+	LOCAL loError
+
+	llExiste = .F.
+	llOk = .T.
+	lcError = ""
+	lcAliasAnterior = ALIAS()
+	lcTabla = pcSysDir + pcDB + "\cyvventas"
+	lcDBC = pcSysDir + pcDB + "\masterdb.dbc"
+
+*!*		IF UPPER(ALLTRIM(pcDB)) <> "AGILSOFT_001_IMPMARRQ"
+*!*			RETURN .T.
+*!*		ENDIF
+
+	TRY
+		IF USED("cValStatusApiIM")
+			USE IN cValStatusApiIM
+		ENDIF
+		USE (lcTabla) SHARED AGAIN IN 0 ALIAS cValStatusApiIM
+		SELECT cValStatusApiIM
+		FOR lnCampo = 1 TO FCOUNT()
+			IF UPPER(ALLTRIM(FIELD(lnCampo))) == "STATUSAPIIM"
+				llExiste = .T.
+				EXIT
+			ENDIF
+		ENDFOR
+		USE IN cValStatusApiIM
+
+		IF !llExiste
+			IF USED("cyvventas")
+				ERROR "Cierre los formularios que utilizan cyvventas antes de agregar statusApiIM."
+			ENDIF
+			IF !DBUSED("masterdb")
+				OPEN DATABASE (lcDBC) SHARED
+			ENDIF
+
+			WAIT WINDOW "Agregando status ApiIM." NOWAIT
+			USE (lcTabla) EXCLUSIVE IN 0 ALIAS cyvventas
+			ALTER TABLE cyvventas ADD COLUMN statusApiIM I DEFAULT 0
+
+			* Todos los documentos existentes ya fueron enviados.
+			FLUSH IN cyvventas
+			USE IN cyvventas
+					
+			USE (lcTabla) SHARED AGAIN IN 0 
+			SELECT cyvventas
+			REPLACE ALL statusApiIM WITH 1 IN cyvventas
+			USE IN cyvventas
+		ENDIF
+	CATCH TO loError
+		llOk = .F.
+		lcError = loError.Message
+	FINALLY
+		IF USED("cValStatusApiIM")
+			USE IN cValStatusApiIM
+		ENDIF
+		IF USED("cyvventas")
+			USE IN cyvventas
+		ENDIF
+		WAIT CLEAR
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	IF !llOk
+		MESSAGEBOX("No se pudo agregar statusApiIM: " + lcError, 16, "Gestion Interna")
+	ENDIF
+	RETURN llOk
+ENDFUNC
+
+
+FUNCTION MarcarVentaStatusApiIM
+	LPARAMETERS tnIdDocto, tnEstado
+	LOCAL llOk, lcAliasAnterior, loError
+
+	llOk = .F.
+	lcAliasAnterior = ALIAS()
+
+	IF TYPE("pcSysDir") <> "C" OR TYPE("pcDB") <> "C"
+		RETURN .F.
+	ENDIF
+	IF UPPER(ALLTRIM(pcDB)) <> "AGILSOFT_001_IMPMARRQ"
+		RETURN .F.
+	ENDIF
+	IF !INLIST(NVL(tnEstado, -1), 0, 1)
+		RETURN .F.
+	ENDIF
+
+	TRY
+		IF USED("cStatusApiIM")
+			USE IN cStatusApiIM
+		ENDIF
+		USE (pcSysDir + pcDB + "\cyvventas") SHARED AGAIN IN 0 ALIAS cStatusApiIM
+		IF TYPE("cStatusApiIM.statusApiIM") <> "U"
+			SELECT cStatusApiIM
+			LOCATE FOR iddocto = m.tnIdDocto
+			IF FOUND() AND RLOCK("cStatusApiIM")
+				REPLACE statusApiIM WITH m.tnEstado IN cStatusApiIM
+				FLUSH IN cStatusApiIM
+				UNLOCK IN cStatusApiIM
+				llOk = .T.
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		llOk = .F.
+	FINALLY
+		IF USED("cStatusApiIM")
+			USE IN cStatusApiIM
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN llOk
+ENDFUNC
+
+
+FUNCTION ProcesarPendientesGestionInterna
+	LPARAMETERS tnMaximo
+	LOCAL lnMaximo, lnProcesados, lnIdDocto, llEsPrueba
+	LOCAL lcAliasAnterior, loEnvio, loResultado, loError
+
+	loResultado = CREATEOBJECT("Empty")
+	ADDPROPERTY(loResultado, "ok", .F.)
+	ADDPROPERTY(loResultado, "pendientes", 0)
+	ADDPROPERTY(loResultado, "procesados", 0)
+	ADDPROPERTY(loResultado, "enviados", 0)
+	ADDPROPERTY(loResultado, "fallidos", 0)
+	ADDPROPERTY(loResultado, "mensaje", "")
+
+	lnMaximo = 10
+	IF VARTYPE(tnMaximo) = "N" AND tnMaximo > 0
+		lnMaximo = INT(tnMaximo)
+	ENDIF
+	lcAliasAnterior = ALIAS()
+	llEsPrueba = .F.
+	IF TYPE("PC_USER(1)") = "C"
+		llEsPrueba = UPPER(ALLTRIM(PC_USER(1))) == "MOVILRUIZ"
+	ENDIF
+
+	IF TYPE("pcSysDir") <> "C" OR TYPE("pcDB") <> "C" OR ;
+		UPPER(ALLTRIM(pcDB)) <> "AGILSOFT_001_IMPMARRQ"
+		loResultado.mensaje = "La empresa activa no es Importadora Marroquin."
+		RETURN loResultado
+	ENDIF
+	IF TYPE("pnSincronizaIMap") <> "N"
+		loResultado.mensaje = "No esta disponible pnSincronizaIMap."
+		RETURN loResultado
+	ENDIF
+	IF pnSincronizaIMap <> 1
+		loResultado.mensaje = "La sincronizacion con Importadora Marroquin esta deshabilitada."
+		RETURN loResultado
+	ENDIF
+	IF TYPE("pnIdSucursal") <> "N"
+		loResultado.mensaje = "No esta disponible la sucursal activa."
+		RETURN loResultado
+	ENDIF
+	IF pnIdSucursal <= 0
+		loResultado.mensaje = "La sucursal activa no es valida."
+		RETURN loResultado
+	ENDIF
+
+	TRY
+		IF USED("cPendStatusApiIM")
+			USE IN cPendStatusApiIM
+		ENDIF
+		IF USED("cPendApiIM")
+			USE IN cPendApiIM
+		ENDIF
+
+		USE (pcSysDir + pcDB + "\cyvventas") SHARED AGAIN IN 0 ALIAS cPendStatusApiIM
+		IF TYPE("cPendStatusApiIM.statusApiIM") = "U"
+			ERROR "No existe el campo statusApiIM en cyvventas."
+		ENDIF
+
+		SELECT iddocto, fechadocto ;
+			FROM cPendStatusApiIM ;
+			WHERE statusApiIM = 0 AND eliminado = 0 AND idsucursal = m.pnIdSucursal AND ;
+				NVL(fechadocto, {}) >= DATE(2026, 10, 7) ;
+			ORDER BY fechadocto, iddocto ;
+			INTO CURSOR cPendApiIM READWRITE
+		USE IN cPendStatusApiIM
+
+		loResultado.pendientes = RECCOUNT("cPendApiIM")
+		lnProcesados = 0
+		SELECT cPendApiIM
+		SCAN WHILE lnProcesados < lnMaximo
+			lnIdDocto = cPendApiIM.iddocto
+			lnProcesados = lnProcesados + 1
+			loEnvio = EnviarJsonGestionInterna(lnIdDocto, "VTA", "", llEsPrueba)
+			loResultado.procesados = loResultado.procesados + 1
+			IF loEnvio.ok AND MarcarVentaStatusApiIM(lnIdDocto, 1)
+				loResultado.enviados = loResultado.enviados + 1
+			ELSE
+				loResultado.fallidos = loResultado.fallidos + 1
+			ENDIF
+		ENDSCAN
+
+		loResultado.ok = loResultado.fallidos = 0
+		loResultado.mensaje = "Procesados: " + TRANSFORM(loResultado.procesados) + ;
+			", enviados: " + TRANSFORM(loResultado.enviados) + ;
+			", fallidos: " + TRANSFORM(loResultado.fallidos) + "."
+	CATCH TO loError
+		loResultado.mensaje = loError.Message
+	FINALLY
+		IF USED("cPendStatusApiIM")
+			USE IN cPendStatusApiIM
+		ENDIF
+		IF USED("cPendApiIM")
+			USE IN cPendApiIM
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN loResultado
+ENDFUNC
+
+
+FUNCTION DebeSincronizarVentaIM
+	LPARAMETERS tnIdDocto
+	LOCAL llSincroniza, lcAliasAnterior, loError
+
+	llSincroniza = .F.
+	lcAliasAnterior = ALIAS()
+
+	IF TYPE("pcSysDir") <> "C" OR TYPE("pcDB") <> "C"
+		RETURN .F.
+	ENDIF
+	IF UPPER(ALLTRIM(pcDB)) <> "AGILSOFT_001_IMPMARRQ"
+		RETURN .F.
+	ENDIF
+	IF TYPE("pnSincronizaIMap") <> "N"
+		RETURN .F.
+	ENDIF
+	IF pnSincronizaIMap <> 1
+		RETURN .F.
+	ENDIF
+	IF TYPE("pnIdSucursal") <> "N"
+		RETURN .F.
+	ENDIF
+	IF pnIdSucursal <= 0
+		RETURN .F.
+	ENDIF
+
+	TRY
+		IF USED("cDebeSyncApiIM")
+			USE IN cDebeSyncApiIM
+		ENDIF
+		USE (pcSysDir + pcDB + "\cyvventas") SHARED AGAIN IN 0 ALIAS cDebeSyncApiIM
+		SELECT cDebeSyncApiIM
+		LOCATE FOR iddocto = m.tnIdDocto
+		IF FOUND()
+			llSincroniza = NVL(fechadocto, {}) >= DATE(2026, 10, 7) AND ;
+				NVL(idsucursal, 0) = m.pnIdSucursal
+		ENDIF
+	CATCH TO loError
+		llSincroniza = .F.
+	FINALLY
+		IF USED("cDebeSyncApiIM")
+			USE IN cDebeSyncApiIM
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN llSincroniza
 ENDFUNC
