@@ -9034,9 +9034,9 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 				UPDATE C_CLI SET idctacontable=a.idCUENTA from clictb a inner join c_cli on a.CODCTA=c_cli.ctacontable
 			ENDIF 
 			SELECT c_cli
-			llSinTarifa=.f.
+			llSinTarifa=.f. 
 			lnMalosTarifa=0
-			
+	  		
 			IF pcVersionS='AZURE'
 				IF lcMiOrigenCXCP="CLI"
 		 			COUNT FOR  NVL(idtarifa,0)<1 TO lnMalosTarifa
@@ -15712,3 +15712,971 @@ ENDFUNC
 
 
 
+
+* ============================================================================
+* Carga masiva DIPRO desde Excel usando la API de sincronizacion.
+* Se mantiene en varios2.prg para no agregar PRG operativos nuevos.
+* ============================================================================
+FUNCTION ImportarPedidosExcelApi
+	LPARAMETERS tcArchivo, toFormulario
+	LOCAL lcArchivo, lcClave, lcUsuario, lcUrl, lcToken, lcResultado
+	LOCAL lnLineas, lnPedidos, lnClientesNuevos, lnInvalidos, lnCargados, lnFallidos
+	LOCAL llContinuar, llAutorizado, llTermino, loError, lnArea
+
+	lcArchivo = FULLPATH(ALLTRIM(NVL(tcArchivo, "")))
+	lnArea = SELECT()
+	llTermino = .F.
+	lcToken = ""
+	lcResultado = ""
+
+	IF EMPTY(lcArchivo) OR !FILE(lcArchivo)
+		MESSAGEBOX("No se encontro el archivo Excel seleccionado.", 16, "Carga masiva de pedidos")
+		RETURN .F.
+	ENDIF
+	IF LOWER(JUSTEXT(lcArchivo)) <> "xls"
+		MESSAGEBOX("El archivo debe estar guardado en formato Excel 97-2003 (.xls).", 48, "Carga masiva de pedidos")
+		RETURN .F.
+	ENDIF
+	IF TYPE("pcDB") <> "C" OR UPPER(ALLTRIM(pcDB)) <> "AGILSOFT_001_DIPRO"
+		MESSAGEBOX("Esta carga por API esta habilitada solamente para la empresa DIPRO.", 48, "Carga masiva de pedidos")
+		RETURN .F.
+	ENDIF
+	IF VARTYPE(toFormulario) <> "O" OR !PEMSTATUS(toFormulario, "txtClaveApi", 5)
+		MESSAGEBOX("No esta disponible el campo de clave para autenticar la carga.", 16, "Carga masiva de pedidos")
+		RETURN .F.
+	ENDIF
+
+	lcClave = ALLTRIM(TRANSFORM(toFormulario.txtClaveApi.Value))
+	lcUsuario = IIF(TYPE("pcUsuario") = "C", ALLTRIM(pcUsuario), "")
+	IF EMPTY(lcUsuario) OR EMPTY(lcClave)
+		MESSAGEBOX("Escriba la clave del usuario actual de SIGA.", 48, "Carga masiva de pedidos")
+		toFormulario.txtClaveApi.SetFocus()
+		RETURN .F.
+	ENDIF
+
+	lcUrl = ApiPedidosUrlBase()
+	ApiPedidosCerrarCursores()
+	TRY
+		ApiPedidosActualizarEstado(toFormulario, 3, "Leyendo y validando el archivo Excel...", "")
+		ApiPedidosCrearCursores()
+		IF !ApiPedidosLeerExcel(lcArchivo)
+			ERROR "No se encontraron lineas DIPRO validas en el archivo."
+		ENDIF
+		ApiPedidosValidarLineas()
+		ApiPedidosPrepararClientes()
+		ApiPedidosPrepararEncabezados()
+
+		SELECT c_ApiLineas
+		COUNT TO lnLineas
+		SELECT c_ApiPedidos
+		COUNT TO lnPedidos
+		COUNT FOR !valido TO lnInvalidos
+		SELECT c_ApiClientes
+		COUNT FOR nuevo AND valido TO lnClientesNuevos
+
+		ApiPedidosActualizarEstado(toFormulario, 20, "Validacion terminada.", ;
+			TRANSFORM(lnLineas) + " lineas, " + TRANSFORM(lnPedidos) + " pedidos, " + ;
+			TRANSFORM(lnClientesNuevos) + " clientes nuevos, " + TRANSFORM(lnInvalidos) + " pedidos con problemas.")
+
+		llContinuar = MESSAGEBOX("Archivo validado:" + CHR(13) + ;
+			"Pedidos: " + TRANSFORM(lnPedidos) + CHR(13) + ;
+			"Lineas: " + TRANSFORM(lnLineas) + CHR(13) + ;
+			"Clientes nuevos: " + TRANSFORM(lnClientesNuevos) + CHR(13) + ;
+			"Pedidos con problemas: " + TRANSFORM(lnInvalidos) + CHR(13) + CHR(13) + ;
+			"Desea iniciar la carga por API?", 4 + 32 + 256, "Confirmar carga masiva") = 6
+
+		IF llContinuar
+			ApiPedidosActualizarEstado(toFormulario, 25, "Autenticando el usuario en la API...", "")
+			lcToken = ApiPedidosAutenticar(lcUrl, lcUsuario, lcClave)
+			IF EMPTY(lcToken)
+				ERROR "No fue posible autenticar el usuario en la API. Revise la clave y que la API este iniciada."
+			ENDIF
+
+			IF lnClientesNuevos > 0
+				ApiPedidosEnviarClientes(lcUrl, lcToken, toFormulario)
+			ENDIF
+			ApiPedidosAsignarClientes()
+			ApiPedidosEnviarOrdenes(lcUrl, lcToken, toFormulario)
+			ApiPedidosAgregarInvalidosAlResumen()
+			lcResultado = ApiPedidosExportarResumen(lcArchivo)
+
+			SELECT c_ApiResumen
+			COUNT FOR tipo = "PEDIDO" AND estado = "CARGADO" TO lnCargados
+			COUNT FOR tipo = "PEDIDO" AND estado <> "CARGADO" TO lnFallidos
+			ApiPedidosActualizarEstado(toFormulario, 100, "Proceso finalizado.", ;
+				"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
+				"Pedidos no cargados: " + TRANSFORM(lnFallidos) + CHR(13) + ;
+				"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
+				"Archivo: " + JUSTFNAME(lcResultado))
+			toFormulario.cArchivoResultado = lcResultado
+			IF lnFallidos > 0
+				MESSAGEBOX("Carga finalizada con observaciones." + CHR(13) + ;
+					"Cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
+					"No cargados: " + TRANSFORM(lnFallidos) + CHR(13) + CHR(13) + ;
+					"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
+					"Archivo: " + JUSTFNAME(lcResultado), 48, "Carga masiva de pedidos")
+				ApiPedidosAbrirArchivo(lcResultado)
+			ELSE
+				MESSAGEBOX("Carga completada correctamente." + CHR(13) + ;
+					"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + CHR(13) + ;
+					"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
+					"Archivo: " + JUSTFNAME(lcResultado), 64, "Carga masiva de pedidos")
+			ENDIF
+			llTermino = .T.
+		ELSE
+			ApiPedidosActualizarEstado(toFormulario, 0, "Carga cancelada por el usuario.", "No se envio ningun dato.")
+		ENDIF
+	CATCH TO loError
+		ApiPedidosActualizarEstado(toFormulario, 0, "La carga no pudo completarse.", loError.Message)
+		MESSAGEBOX("No se completo la carga:" + CHR(13) + loError.Message, 16, "Carga masiva de pedidos")
+	FINALLY
+		lcToken = ""
+		lcClave = ""
+		IF VARTYPE(toFormulario) = "O" AND PEMSTATUS(toFormulario, "txtClaveApi", 5)
+			toFormulario.txtClaveApi.Value = ""
+		ENDIF
+		IF lnArea > 0
+			SELECT (lnArea)
+		ENDIF
+	ENDTRY
+
+	RETURN llTermino
+ENDFUNC
+
+
+FUNCTION ApiPedidosUrlBase
+	LOCAL lcUrl, luValor
+	lcUrl = "http://127.0.0.1:5088"
+	IF TYPE("pcSysDir") = "C" AND TYPE("pcDB") = "C"
+		luValor = _LeerIni(pcSysDir + pcDB + "\parametros.sys", "parametros", "SigaApiUrl")
+		IF VARTYPE(luValor) = "C" AND !EMPTY(ALLTRIM(luValor))
+			lcUrl = ALLTRIM(luValor)
+		ENDIF
+	ENDIF
+	DO WHILE RIGHT(lcUrl, 1) = "/"
+		lcUrl = LEFT(lcUrl, LEN(lcUrl) - 1)
+	ENDDO
+	RETURN lcUrl
+ENDFUNC
+
+
+PROCEDURE ApiPedidosCrearCursores
+	CREATE CURSOR c_ApiXls (dipro C(20), fecha C(10), numero C(20), codclipro C(20), clipro C(200), nombrecli C(200), ;
+		bblank1 C(20), direccion C(200), bblank2 C(20), bblank3 C(20), bblank4 C(20), bblank5 C(20), ;
+		codprod C(20), producto C(200), unimed C(10), cantidadtexto C(25), cantddd N(18,6), cannet N(18,6), iva N(12,4), ;
+		precno N(18,6), preciotexto C(25), premalo N(18,6), bbbla1 C(20), bbbla2 C(20), bbbla3 C(20), ;
+		bbbla4 C(20), bbbla5 C(20), bbbla6 C(20), bbbla7 C(20), vendedor C(120), nada C(20), notaaf C(250))
+	CREATE CURSOR c_ApiLineas (numero C(15), fecha D, codclipro C(20), clipro C(200), nombrecli C(200), direccion C(250), ;
+		codprod C(20), producto C(200), idproducto I, cantidad N(18,6), precio N(18,6), total N(18,6), ;
+		idagente I, vendedor C(120), notaaf C(250), valido L, error C(254))
+	CREATE CURSOR c_ApiClientes (codclipro C(20), clipro C(200), nombre C(200), direccion C(250), idclipro I, ;
+		nuevo L, valido L, error C(254), uid C(60), enviado L)
+	CREATE CURSOR c_ApiPedidos (numero C(15), fecha D, codclipro C(20), idclipro I, idagente I, notaaf C(250), ;
+		lineas I, total N(18,6), valido L, error C(254), uid C(60), enviado L)
+	CREATE CURSOR c_ApiResumen (tipo C(12), numero C(20), codigo C(20), nombre C(120), fecha D, lineas I, ;
+		total N(18,6), estado C(20), idservidor I, referencia C(30), mensaje C(254))
+ENDPROC
+
+
+FUNCTION ApiPedidosLeerExcel
+	LPARAMETERS tcArchivo
+	LOCAL lnFilas
+	SELECT c_ApiXls
+	APPEND FROM (tcArchivo) TYPE XL5
+	DELETE ALL FOR UPPER(ALLTRIM(dipro)) <> "DIPRO"
+	COUNT TO lnFilas
+	RETURN lnFilas > 0
+ENDFUNC
+
+
+PROCEDURE ApiPedidosValidarLineas
+	LOCAL lcNumero, lcCodCli, lcCodProd, lcVendedor, lcError, lcFecha
+	LOCAL ldFecha, lnCantidad, lnTotal, lnPrecio, lnIdProducto, lnIdAgente, lnPos
+
+	USE (pcSysDir + pcDB + "\invproductos") IN 0 SHARED AGAIN ALIAS c_ApiDbProd
+	SELECT idproducto, ALLTRIM(codprod) AS codprod FROM c_ApiDbProd WHERE status = 1 INTO CURSOR c_ApiProductos READWRITE
+	USE IN c_ApiDbProd
+	SELECT c_ApiProductos
+	INDEX ON UPPER(ALLTRIM(codprod)) TAG codprod
+
+	USE (pcSysDir + pcDB + "\siscata") IN 0 SHARED AGAIN ALIAS c_ApiDbCat
+	SELECT id, ALLTRIM(cod) AS cod FROM c_ApiDbCat WHERE UPPER(ALLTRIM(origen)) = "VEN" AND status = 1 INTO CURSOR c_ApiVendedores READWRITE
+	USE IN c_ApiDbCat
+	SELECT c_ApiVendedores
+	INDEX ON id TAG id
+
+	USE (pcSysDir + pcDB + "\cyvventas") IN 0 SHARED AGAIN ALIAS c_ApiDbVenta
+	SELECT ALLTRIM(numero) AS numero FROM c_ApiDbVenta WHERE UPPER(ALLTRIM(origen)) = "VTP" INTO CURSOR c_ApiExistentes READWRITE
+	USE IN c_ApiDbVenta
+	SELECT c_ApiExistentes
+	INDEX ON VAL(ALLTRIM(numero)) TAG numero
+
+	SELECT c_ApiXls
+	SCAN
+		lcError = ""
+		lcNumero = LEFT(ALLTRIM(solonumeros(c_ApiXls.numero)), 15)
+		lcCodCli = LEFT(ALLTRIM(c_ApiXls.codclipro), 20)
+		lcCodProd = LEFT(ALLTRIM(c_ApiXls.codprod), 20)
+		lcFecha = ALLTRIM(c_ApiXls.fecha)
+		ldFecha = {}
+		IF LEN(lcFecha) >= 10
+			ldFecha = DATE(VAL(SUBSTR(lcFecha, 1, 4)), VAL(SUBSTR(lcFecha, 6, 2)), VAL(SUBSTR(lcFecha, 9, 2)))
+		ENDIF
+		lnCantidad = VAL(STRTRAN(ALLTRIM(c_ApiXls.cantidadtexto), ",", ""))
+		lnTotal = VAL(STRTRAN(ALLTRIM(c_ApiXls.preciotexto), ",", ""))
+		lnPrecio = 0
+		IF lnCantidad <> 0
+			lnPrecio = lnTotal / lnCantidad
+		ENDIF
+		lnIdProducto = 0
+		SELECT c_ApiProductos
+		IF SEEK(UPPER(lcCodProd), "c_ApiProductos", "codprod")
+			lnIdProducto = c_ApiProductos.idproducto
+		ELSE
+			lcError = ApiPedidosUnirError(lcError, "Producto no existe: " + lcCodProd)
+		ENDIF
+		lcVendedor = ALLTRIM(c_ApiXls.vendedor)
+		lnPos = AT("-", lcVendedor)
+		lnIdAgente = 0
+		IF lnPos > 1
+			lnIdAgente = VAL(LEFT(lcVendedor, lnPos - 1))
+		ENDIF
+		SELECT c_ApiVendedores
+		IF lnIdAgente <= 0 OR !SEEK(lnIdAgente, "c_ApiVendedores", "id")
+			lcError = ApiPedidosUnirError(lcError, "Vendedor no existe: " + TRANSFORM(lnIdAgente))
+		ENDIF
+		IF EMPTY(lcNumero)
+			lcError = ApiPedidosUnirError(lcError, "Numero de pedido vacio")
+		ENDIF
+		IF EMPTY(lcCodCli)
+			lcError = ApiPedidosUnirError(lcError, "Codigo de cliente vacio")
+		ENDIF
+		IF EMPTY(ldFecha)
+			lcError = ApiPedidosUnirError(lcError, "Fecha invalida")
+		ENDIF
+		IF lnCantidad <= 0
+			lcError = ApiPedidosUnirError(lcError, "Cantidad debe ser mayor que cero")
+		ENDIF
+		IF lnPrecio < 0
+			lcError = ApiPedidosUnirError(lcError, "Precio invalido")
+		ENDIF
+		SELECT c_ApiLineas
+		INSERT INTO c_ApiLineas VALUES (lcNumero, ldFecha, lcCodCli, LEFT(ALLTRIM(c_ApiXls.clipro), 200), ;
+			LEFT(ALLTRIM(c_ApiXls.nombrecli), 200), LEFT(ALLTRIM(c_ApiXls.direccion), 250), lcCodProd, ;
+			LEFT(ALLTRIM(c_ApiXls.producto), 200), lnIdProducto, lnCantidad, lnPrecio, lnTotal, lnIdAgente, ;
+			LEFT(lcVendedor, 120), LEFT(ALLTRIM(c_ApiXls.notaaf), 250), EMPTY(lcError), LEFT(lcError, 254))
+	ENDSCAN
+	SELECT c_ApiLineas
+	INDEX ON numero TAG numero
+ENDPROC
+
+
+PROCEDURE ApiPedidosPrepararClientes
+	LOCAL lcCodigo
+	USE (pcSysDir + pcDB + "\cyvclipro") IN 0 SHARED AGAIN ALIAS c_ApiDbCli
+	SELECT idclipro, ALLTRIM(codclipro) AS codclipro FROM c_ApiDbCli WHERE tipoclipro = 1 INTO CURSOR c_ApiClientesDb READWRITE
+	USE IN c_ApiDbCli
+	SELECT c_ApiClientesDb
+	INDEX ON UPPER(ALLTRIM(codclipro)) TAG codclipro
+	SELECT c_ApiClientes
+	INDEX ON UPPER(ALLTRIM(codclipro)) TAG codclipro
+	SELECT c_ApiLineas
+	SCAN
+		lcCodigo = ALLTRIM(c_ApiLineas.codclipro)
+		IF !SEEK(UPPER(lcCodigo), "c_ApiClientes", "codclipro")
+			SELECT c_ApiClientesDb
+			IF SEEK(UPPER(lcCodigo), "c_ApiClientesDb", "codclipro")
+				INSERT INTO c_ApiClientes VALUES (lcCodigo, c_ApiLineas.clipro, c_ApiLineas.nombrecli, c_ApiLineas.direccion, ;
+					c_ApiClientesDb.idclipro, .F., .T., "", "", .T.)
+			ELSE
+				INSERT INTO c_ApiClientes VALUES (lcCodigo, c_ApiLineas.clipro, c_ApiLineas.nombrecli, c_ApiLineas.direccion, ;
+					0, .T., !EMPTY(lcCodigo) AND !EMPTY(c_ApiLineas.clipro), ;
+					IIF(EMPTY(c_ApiLineas.clipro), "Nombre de cliente vacio", ""), ;
+					ApiPedidosUid("CLI", lcCodigo), .F.)
+			ENDIF
+		ENDIF
+	ENDSCAN
+ENDPROC
+
+
+PROCEDURE ApiPedidosPrepararEncabezados
+	LOCAL lcNumero, lcError, lcCodCli, ldFecha, lnIdAgente
+	SELECT c_ApiPedidos
+	INDEX ON numero TAG numero
+	SELECT c_ApiLineas
+	SCAN
+		lcNumero = c_ApiLineas.numero
+		IF !SEEK(lcNumero, "c_ApiPedidos", "numero")
+			INSERT INTO c_ApiPedidos VALUES (lcNumero, c_ApiLineas.fecha, c_ApiLineas.codclipro, 0, c_ApiLineas.idagente, ;
+				c_ApiLineas.notaaf, 0, 0, .T., "", ApiPedidosUid("PED", DTOC(c_ApiLineas.fecha, 1) + "-" + lcNumero), .F.)
+		ENDIF
+		SELECT c_ApiPedidos
+		=SEEK(lcNumero, "c_ApiPedidos", "numero")
+		lcError = c_ApiPedidos.error
+		IF c_ApiLineas.fecha <> c_ApiPedidos.fecha
+			lcError = ApiPedidosUnirError(lcError, "El pedido tiene fechas diferentes")
+		ENDIF
+		IF c_ApiLineas.codclipro <> c_ApiPedidos.codclipro
+			lcError = ApiPedidosUnirError(lcError, "El pedido tiene clientes diferentes")
+		ENDIF
+		IF c_ApiLineas.idagente <> c_ApiPedidos.idagente
+			lcError = ApiPedidosUnirError(lcError, "El pedido tiene vendedores diferentes")
+		ENDIF
+		IF !c_ApiLineas.valido
+			lcError = ApiPedidosUnirError(lcError, c_ApiLineas.error)
+		ENDIF
+		SELECT c_ApiExistentes
+		IF SEEK(VAL(lcNumero), "c_ApiExistentes", "numero")
+			lcError = ApiPedidosUnirError(lcError, "El numero de pedido ya existe en SIGA")
+		ENDIF
+		SELECT c_ApiPedidos
+		REPLACE lineas WITH lineas + 1, total WITH total + c_ApiLineas.total, ;
+			error WITH LEFT(lcError, 254), valido WITH EMPTY(lcError)
+	ENDSCAN
+	ApiPedidosAsignarClientes()
+ENDPROC
+
+
+PROCEDURE ApiPedidosAsignarClientes
+	LOCAL lcError
+	SELECT c_ApiPedidos
+	SCAN
+		lcError = c_ApiPedidos.error
+		SELECT c_ApiClientes
+		IF SEEK(UPPER(ALLTRIM(c_ApiPedidos.codclipro)), "c_ApiClientes", "codclipro")
+			SELECT c_ApiPedidos
+			REPLACE idclipro WITH c_ApiClientes.idclipro
+			IF c_ApiClientes.idclipro <= 0 AND (!c_ApiClientes.nuevo OR c_ApiClientes.enviado)
+				lcError = ApiPedidosUnirError(lcError, IIF(EMPTY(c_ApiClientes.error), "Cliente no disponible", c_ApiClientes.error))
+			ENDIF
+		ELSE
+			SELECT c_ApiPedidos
+			lcError = ApiPedidosUnirError(lcError, "Cliente no resuelto")
+		ENDIF
+		SELECT c_ApiPedidos
+		REPLACE error WITH LEFT(lcError, 254), valido WITH EMPTY(lcError)
+	ENDSCAN
+ENDPROC
+
+
+FUNCTION ApiPedidosAutenticar
+	LPARAMETERS tcUrl, tcUsuario, tcClave
+	LOCAL lcJson, lcToken, loHttp, loJson, loDatos, loError
+	lcToken = ""
+	lcJson = "{" + '"tenant":"DIPRO","username":' + _JsonVentaTexto(tcUsuario) + ;
+		',"password":' + _JsonVentaTexto(tcClave) + ',"deviceId":' + _JsonVentaTexto(ApiPedidosDispositivo()) + ;
+		',"deviceName":"SIGA ERP","platform":"vfp-erp","appVersion":"1.0"}'
+	loHttp = ApiPedidosHttp(tcUrl + "/api/auth/login", lcJson, "", "DIPRO")
+	IF loHttp.status >= 200 AND loHttp.status < 300
+		TRY
+			loJson = json_decode(loHttp.texto)
+			loDatos = loJson.get("data")
+			lcToken = ALLTRIM(NVL(loDatos.get("accessToken"), ""))
+		CATCH TO loError
+			lcToken = ""
+		ENDTRY
+	ELSE
+		ERROR ApiPedidosMensajeRespuesta(loHttp.texto, "HTTP " + TRANSFORM(loHttp.status) + " al autenticar")
+	ENDIF
+	RETURN lcToken
+ENDFUNC
+
+
+PROCEDURE ApiPedidosEnviarClientes
+	LPARAMETERS tcUrl, tcToken, toFormulario
+	LOCAL lnTotal, lnHechos, lnInicio, lnCantidad, lcJson, loHttp
+	SELECT c_ApiClientes
+	COUNT FOR nuevo AND valido AND !enviado TO lnTotal
+	lnHechos = 0
+	DO WHILE lnHechos < lnTotal
+		lcJson = ApiPedidosJsonLoteClientes(50, @lnCantidad)
+		IF lnCantidad <= 0
+			EXIT
+		ENDIF
+		loHttp = ApiPedidosHttp(tcUrl + "/api/sync/push", lcJson, tcToken, "DIPRO")
+		IF loHttp.status < 200 OR loHttp.status >= 300
+			ERROR ApiPedidosMensajeRespuesta(loHttp.texto, "Fallo el envio de clientes")
+		ENDIF
+		ApiPedidosProcesarRespuesta(loHttp.texto, "CUSTOMER")
+		lnHechos = lnHechos + lnCantidad
+		ApiPedidosActualizarEstado(toFormulario, 25 + INT(15 * lnHechos / MAX(1, lnTotal)), ;
+			"Creando clientes nuevos...", TRANSFORM(lnHechos) + " de " + TRANSFORM(lnTotal))
+	ENDDO
+ENDPROC
+
+
+FUNCTION ApiPedidosJsonLoteClientes
+	LPARAMETERS tnMaximo, tnCantidad
+	LOCAL lcOps, lcComa, lcUid, lnCont
+	tnCantidad = 0
+	lcOps = "["
+	lcComa = ""
+	lnCont = 0
+	SELECT c_ApiClientes
+	SCAN FOR nuevo AND valido AND !enviado
+		lcOps = lcOps + lcComa + ApiPedidosJsonCliente()
+		lcComa = ","
+		REPLACE enviado WITH .T.
+		lnCont = lnCont + 1
+		IF lnCont >= tnMaximo
+			EXIT
+		ENDIF
+	ENDSCAN
+	tnCantidad = lnCont
+	RETURN '{"deviceId":' + _JsonVentaTexto(ApiPedidosDispositivo()) + ;
+		',"batchUid":' + _JsonVentaTexto(LEFT(ApiPedidosUid("BCL", TTOC(DATETIME(), 1) + SYS(2015)), 36)) + ;
+		',"deviceName":"SIGA ERP","platform":"vfp-erp","appVersion":"1.0","operations":' + lcOps + "]}"
+ENDFUNC
+
+
+FUNCTION ApiPedidosJsonCliente
+	LOCAL lcNombre, lcLegal
+	lcNombre = ALLTRIM(c_ApiClientes.clipro)
+	lcLegal = ALLTRIM(c_ApiClientes.nombre)
+	IF EMPTY(lcLegal)
+		lcLegal = lcNombre
+	ENDIF
+	RETURN '{"clientUid":' + _JsonVentaTexto(c_ApiClientes.uid) + ;
+		',"entity":"CUSTOMER","action":"CREATE","payload":{' + ;
+		'"code":' + _JsonVentaTexto(c_ApiClientes.codclipro) + ;
+		',"displayName":' + _JsonVentaTexto(lcNombre) + ;
+		',"legalName":' + _JsonVentaTexto(lcLegal) + ;
+		',"address":' + _JsonVentaTexto(IIF(EMPTY(c_ApiClientes.direccion), "KM 9.5 CARRETERA DE ORO", c_ApiClientes.direccion)) + ;
+		',"mobile":"7000-0000","email":"noenviar@gmail.com"' + ;
+		',"customerType":1,"branchId":' + TRANSFORM(pnIdSucursal) + ;
+		',"groupId":261,"departmentId":1106,"municipalityId":10518' + ;
+		',"contributorType":1,"vatType":1,"paymentCondition":0,"personType":1' + ;
+		',"domiciledCode":1,"countryCode":"SV","isActive":true}}'
+ENDFUNC
+
+
+PROCEDURE ApiPedidosEnviarOrdenes
+	LPARAMETERS tcUrl, tcToken, toFormulario
+	LOCAL lnTotal, lnHechos, lnCantidad, lcJson, loHttp
+	SELECT c_ApiPedidos
+	COUNT FOR valido AND !enviado TO lnTotal
+	lnHechos = 0
+	DO WHILE lnHechos < lnTotal
+		lcJson = ApiPedidosJsonLoteOrdenes(25, @lnCantidad)
+		IF lnCantidad <= 0
+			EXIT
+		ENDIF
+		loHttp = ApiPedidosHttp(tcUrl + "/api/sync/push", lcJson, tcToken, "DIPRO")
+		IF loHttp.status < 200 OR loHttp.status >= 300
+			ERROR ApiPedidosMensajeRespuesta(loHttp.texto, "Fallo el envio de pedidos")
+		ENDIF
+		ApiPedidosProcesarRespuesta(loHttp.texto, "ORDER")
+		lnHechos = lnHechos + lnCantidad
+		ApiPedidosActualizarEstado(toFormulario, 40 + INT(55 * lnHechos / MAX(1, lnTotal)), ;
+			"Cargando pedidos por lotes...", TRANSFORM(lnHechos) + " de " + TRANSFORM(lnTotal))
+	ENDDO
+ENDPROC
+
+
+FUNCTION ApiPedidosJsonLoteOrdenes
+	LPARAMETERS tnMaximo, tnCantidad
+	LOCAL lcOps, lcComa, lnCont
+	tnCantidad = 0
+	lcOps = "["
+	lcComa = ""
+	lnCont = 0
+	SELECT c_ApiPedidos
+	SCAN FOR valido AND !enviado
+		lcOps = lcOps + lcComa + ApiPedidosJsonPedido()
+		lcComa = ","
+		REPLACE enviado WITH .T.
+		lnCont = lnCont + 1
+		IF lnCont >= tnMaximo
+			EXIT
+		ENDIF
+	ENDSCAN
+	tnCantidad = lnCont
+	RETURN '{"deviceId":' + _JsonVentaTexto(ApiPedidosDispositivo()) + ;
+		',"batchUid":' + _JsonVentaTexto(LEFT(ApiPedidosUid("BPE", TTOC(DATETIME(), 1) + SYS(2015)), 36)) + ;
+		',"deviceName":"SIGA ERP","platform":"vfp-erp","appVersion":"1.0","operations":' + lcOps + "]}"
+ENDFUNC
+
+
+FUNCTION ApiPedidosJsonPedido
+	LOCAL lcLineas, lcComa, lcNotas, lcNumero, lcUid, lcFecha, lnCliente, lnAgente, lnRecno
+	lnRecno = RECNO("c_ApiPedidos")
+	lcNumero = c_ApiPedidos.numero
+	lcUid = c_ApiPedidos.uid
+	lcFecha = c_ApiPedidos.fecha
+	lnCliente = c_ApiPedidos.idclipro
+	lnAgente = c_ApiPedidos.idagente
+	lcLineas = "["
+	lcComa = ""
+	SELECT c_ApiLineas
+	SCAN FOR numero = lcNumero
+		lcLineas = lcLineas + lcComa + '{"productId":' + TRANSFORM(c_ApiLineas.idproducto) + ;
+			',"quantity":' + _JsonVentaNumero(c_ApiLineas.cantidad, 6) + ;
+			',"unitPriceWithVat":' + _JsonVentaNumero(c_ApiLineas.precio, 6) + ;
+			',"useCatalogPriceCalculation":false,"lineSellerId":' + TRANSFORM(c_ApiLineas.idagente) + "}"
+		lcComa = ","
+	ENDSCAN
+	lcLineas = lcLineas + "]"
+	SELECT c_ApiPedidos
+	GO lnRecno
+	lcNotas = "Pedido No. " + ALLTRIM(lcNumero)
+	IF !EMPTY(ALLTRIM(c_ApiPedidos.notaaf))
+		lcNotas = lcNotas + " - " + ALLTRIM(c_ApiPedidos.notaaf)
+	ENDIF
+	RETURN '{"clientUid":' + _JsonVentaTexto(lcUid) + ;
+		',"entity":"ORDER","action":"CREATE","payload":{' + ;
+		'"customerId":' + TRANSFORM(lnCliente) + ;
+		',"documentDate":' + _JsonVentaFecha(lcFecha) + ;
+		',"number":' + _JsonVentaTexto(lcNumero) + ;
+		',"branchId":' + TRANSFORM(pnIdSucursal) + ;
+		',"agentId":' + TRANSFORM(lnAgente) + ;
+		',"paymentCondition":0,"notes":' + _JsonVentaTexto(LEFT(lcNotas, 250)) + ;
+		',"lines":' + lcLineas + "}}"
+ENDFUNC
+
+
+PROCEDURE ApiPedidosProcesarRespuesta
+	LPARAMETERS tcRespuesta, tcEntidad
+	LOCAL loJson, loDatos, loOps, loOp, lnI, lcUid, lcEstado, lcMensaje, lcRef, lnId, loError
+	TRY
+		loJson = json_decode(tcRespuesta)
+		loDatos = loJson.get("data")
+		loOps = loDatos.get("operations")
+		FOR lnI = 1 TO loOps.getsize()
+			loOp = loOps.get(lnI)
+			lcUid = ALLTRIM(NVL(loOp.get("clientUid"), ""))
+			lcEstado = LOWER(ALLTRIM(NVL(loOp.get("status"), "")))
+			lcMensaje = LEFT(ALLTRIM(NVL(loOp.get("message"), "")), 254)
+			lnId = VAL(TRANSFORM(NVL(loOp.get("serverId"), 0)))
+			lcRef = LEFT(ALLTRIM(TRANSFORM(NVL(loOp.get("serverRef"), ""))), 30)
+			IF UPPER(tcEntidad) = "CUSTOMER"
+				SELECT c_ApiClientes
+				LOCATE FOR uid = lcUid
+				IF FOUND("c_ApiClientes")
+					SELECT c_ApiClientes
+					IF lcEstado = "synced"
+						REPLACE idclipro WITH lnId, valido WITH lnId > 0, error WITH IIF(lnId > 0, "", "La API no devolvio el ID del cliente")
+					ELSE
+						REPLACE valido WITH .F., error WITH lcMensaje
+					ENDIF
+					INSERT INTO c_ApiResumen VALUES ("CLIENTE", "", c_ApiClientes.codclipro, LEFT(c_ApiClientes.clipro, 120), {}, 0, 0, ;
+						IIF(lcEstado = "synced", "CREADO", "NO CREADO"), lnId, lcRef, lcMensaje)
+				ENDIF
+			ELSE
+				SELECT c_ApiPedidos
+				LOCATE FOR uid = lcUid
+				IF FOUND("c_ApiPedidos")
+					SELECT c_ApiPedidos
+					INSERT INTO c_ApiResumen VALUES ("PEDIDO", c_ApiPedidos.numero, c_ApiPedidos.codclipro, "", ;
+						c_ApiPedidos.fecha, c_ApiPedidos.lineas, c_ApiPedidos.total, ;
+						IIF(lcEstado = "synced", "CARGADO", "NO CARGADO"), lnId, lcRef, lcMensaje)
+				ENDIF
+			ENDIF
+		ENDFOR
+	CATCH TO loError
+		ERROR "La API devolvio una respuesta que no se pudo interpretar: " + loError.Message
+	ENDTRY
+ENDPROC
+
+
+PROCEDURE ApiPedidosAgregarInvalidosAlResumen
+	SELECT c_ApiPedidos
+	SCAN FOR !valido
+		IF !ApiPedidosResumenExiste("PEDIDO", c_ApiPedidos.numero)
+		INSERT INTO c_ApiResumen VALUES ("PEDIDO", c_ApiPedidos.numero, c_ApiPedidos.codclipro, "", ;
+			c_ApiPedidos.fecha, c_ApiPedidos.lineas, c_ApiPedidos.total, ;
+			"NO CARGADO", 0, "", LEFT(c_ApiPedidos.error, 254))
+		ENDIF
+	ENDSCAN
+ENDPROC
+
+
+FUNCTION ApiPedidosResumenExiste
+	LPARAMETERS tcTipo, tcNumero
+	LOCAL lnRecno, llExiste
+	lnRecno = RECNO("c_ApiResumen")
+	SELECT c_ApiResumen
+	LOCATE FOR tipo = tcTipo AND numero = tcNumero
+	llExiste = FOUND("c_ApiResumen")
+	IF lnRecno > 0 AND lnRecno <= RECCOUNT("c_ApiResumen")
+		GO lnRecno IN c_ApiResumen
+	ENDIF
+	RETURN llExiste
+ENDFUNC
+
+
+FUNCTION ApiPedidosExportarResumen
+	LPARAMETERS tcArchivo
+	LOCAL lcSalida
+	lcSalida = ADDBS(JUSTPATH(tcArchivo)) + JUSTSTEM(tcArchivo) + "_STATUS_" + ;
+		DTOS(DATE()) + "_" + STRTRAN(TIME(), ":", "") + ".xls"
+	SELECT tipo, numero, codigo, nombre, fecha, lineas, total, estado, idservidor, referencia, mensaje ;
+		FROM c_ApiResumen ORDER BY tipo, numero INTO CURSOR c_ApiExport READWRITE
+	SELECT c_ApiExport
+	COPY TO (lcSalida) TYPE XL5
+	USE IN c_ApiExport
+	RETURN lcSalida
+ENDFUNC
+
+
+FUNCTION ApiPedidosHttp
+	LPARAMETERS tcUrl, tcJson, tcToken, tcTenant
+	LOCAL loRet, loHttp, loError
+	loRet = CREATEOBJECT("Empty")
+	ADDPROPERTY(loRet, "status", 0)
+	ADDPROPERTY(loRet, "texto", "")
+	TRY
+		loHttp = CREATEOBJECT("MSXML2.ServerXMLHTTP.6.0")
+		loHttp.setTimeouts(10000, 10000, 30000, 180000)
+		loHttp.Open("POST", tcUrl, .F.)
+		loHttp.setRequestHeader("Content-Type", "application/json; charset=utf-8")
+		loHttp.setRequestHeader("Accept", "application/json")
+		IF !EMPTY(tcTenant)
+			loHttp.setRequestHeader("X-Siga-Tenant", tcTenant)
+		ENDIF
+		IF !EMPTY(tcToken)
+			loHttp.setRequestHeader("Authorization", "Bearer " + tcToken)
+		ENDIF
+		loHttp.Send(ApiPedidosUtf8(tcJson))
+		loRet.status = loHttp.Status
+		loRet.texto = ApiPedidosLeerUtf8(loHttp.responseBody)
+	CATCH TO loError
+		loRet.status = 0
+		loRet.texto = loError.Message
+	ENDTRY
+	RETURN loRet
+ENDFUNC
+
+
+FUNCTION ApiPedidosUtf8
+	LPARAMETERS tcTexto
+	LOCAL loStream, luBytes
+	loStream = CREATEOBJECT("ADODB.Stream")
+	loStream.Type = 2
+	loStream.Charset = "utf-8"
+	loStream.Open()
+	loStream.WriteText(tcTexto)
+	loStream.Position = 0
+	loStream.Type = 1
+	loStream.Position = 3
+	luBytes = loStream.Read()
+	loStream.Close()
+	RETURN luBytes
+ENDFUNC
+
+
+FUNCTION ApiPedidosLeerUtf8
+	LPARAMETERS tuBytes
+	LOCAL loStream, lcTexto
+	loStream = CREATEOBJECT("ADODB.Stream")
+	loStream.Type = 1
+	loStream.Open()
+	loStream.Write(tuBytes)
+	loStream.Position = 0
+	loStream.Type = 2
+	loStream.Charset = "utf-8"
+	lcTexto = loStream.ReadText()
+	loStream.Close()
+	RETURN lcTexto
+ENDFUNC
+
+
+FUNCTION ApiPedidosMensajeRespuesta
+	LPARAMETERS tcRespuesta, tcPredeterminado
+	LOCAL lcMensaje, loJson, loErrorObj, loError
+	lcMensaje = tcPredeterminado
+	TRY
+		loJson = json_decode(tcRespuesta)
+		loErrorObj = loJson.get("error")
+		IF VARTYPE(loErrorObj) = "O"
+			lcMensaje = ALLTRIM(NVL(loErrorObj.get("message"), lcMensaje))
+		ENDIF
+	CATCH TO loError
+		IF !EMPTY(ALLTRIM(tcRespuesta))
+			lcMensaje = LEFT(ALLTRIM(tcRespuesta), 500)
+		ENDIF
+	ENDTRY
+	RETURN lcMensaje
+ENDFUNC
+
+
+PROCEDURE ApiPedidosActualizarEstado
+	LPARAMETERS toFormulario, tnPorcentaje, tcEstado, tcDetalle
+	LOCAL lnPorcentaje
+	IF VARTYPE(toFormulario) <> "O"
+		RETURN
+	ENDIF
+	lnPorcentaje = MAX(0, MIN(100, NVL(tnPorcentaje, 0)))
+	toFormulario.nProgreso = lnPorcentaje
+	IF PEMSTATUS(toFormulario, "lblEstadoCarga", 5)
+		toFormulario.lblEstadoCarga.Caption = tcEstado
+	ENDIF
+	IF PEMSTATUS(toFormulario, "lblPorcentaje", 5)
+		toFormulario.lblPorcentaje.Caption = TRANSFORM(lnPorcentaje) + "%"
+	ENDIF
+	IF PEMSTATUS(toFormulario, "shpProgreso", 5)
+		toFormulario.shpProgreso.Width = MAX(1, INT((toFormulario.shpProgresoFondo.Width - 2) * lnPorcentaje / 100))
+	ENDIF
+	IF !EMPTY(NVL(tcDetalle, "")) AND PEMSTATUS(toFormulario, "Edt1", 5)
+		IF EMPTY(toFormulario.Edt1.Value)
+			toFormulario.Edt1.Value = tcDetalle
+		ELSE
+			toFormulario.Edt1.Value = toFormulario.Edt1.Value + CHR(13) + tcDetalle
+		ENDIF
+		toFormulario.Edt1.SelStart = LEN(toFormulario.Edt1.Value)
+	ENDIF
+	DOEVENTS
+ENDPROC
+
+
+FUNCTION ApiPedidosUid
+	LPARAMETERS tcPrefijo, tcValor
+	LOCAL lcValor
+	lcValor = UPPER(ALLTRIM(NVL(tcValor, "")))
+	lcValor = CHRTRAN(lcValor, " /\:.-", "______")
+	RETURN LEFT(UPPER(tcPrefijo) + "-DIPRO-" + lcValor, 60)
+ENDFUNC
+
+
+FUNCTION ApiPedidosDispositivo
+	RETURN LEFT("SIGA-VFP-" + UPPER(SYS(0)), 100)
+ENDFUNC
+
+
+FUNCTION ApiPedidosUnirError
+	LPARAMETERS tcActual, tcNuevo
+	LOCAL lcResultado
+	lcResultado = ALLTRIM(NVL(tcActual, ""))
+	IF !EMPTY(ALLTRIM(NVL(tcNuevo, ""))) AND !(ALLTRIM(tcNuevo) $ lcResultado)
+		lcResultado = lcResultado + IIF(EMPTY(lcResultado), "", "; ") + ALLTRIM(tcNuevo)
+	ENDIF
+	RETURN LEFT(lcResultado, 254)
+ENDFUNC
+
+
+PROCEDURE ApiPedidosAbrirArchivo
+	LPARAMETERS tcArchivo
+	IF FILE(tcArchivo)
+		DECLARE INTEGER ShellExecute IN shell32.dll INTEGER, STRING, STRING, STRING, STRING, INTEGER
+		ShellExecute(0, "open", tcArchivo, "", JUSTPATH(tcArchivo), 1)
+	ENDIF
+ENDPROC
+
+
+PROCEDURE ApiPedidosCerrarCursores
+	LOCAL ARRAY laApi(1)
+	LOCAL lnI, lnTotal
+	lnTotal = AUSED(laApi)
+	FOR lnI = 1 TO lnTotal
+		IF UPPER(LEFT(laApi[lnI, 1], 5)) = "C_API"
+			USE IN (laApi[lnI, 1])
+		ENDIF
+	ENDFOR
+ENDPROC
+
+* Credenciales del login almacenadas por Windows para el usuario actual.
+* La clave nunca se escribe en INI, DBF ni archivos propios de SIGA.
+FUNCTION NombreCredencialLoginWindows
+	LPARAMETERS tnIdEmpresa, tcEmpresaDB, tcUsuario
+	LOCAL lcIdentidad, lcHash
+	lcIdentidad = LOWER(ALLTRIM(TRANSFORM(NVL(tnIdEmpresa, 0)))) + "|" + ;
+		LOWER(ALLTRIM(NVL(tcEmpresaDB, ""))) + "|" + ;
+		LOWER(ALLTRIM(NVL(tcUsuario, "")))
+	lcHash = LOWER(STRCONV(Hash(lcIdentidad, 1), 15))
+	RETURN "AgilSoft.SIGA.Login." + lcHash
+ENDFUNC
+
+
+FUNCTION GuardarClaveLoginWindows
+	LPARAMETERS tnIdEmpresa, tcEmpresaDB, tcUsuario, tcClave
+	LOCAL lcDestino
+	IF EMPTY(ALLTRIM(NVL(tcEmpresaDB, ""))) OR ;
+		EMPTY(ALLTRIM(NVL(tcUsuario, ""))) OR EMPTY(NVL(tcClave, ""))
+		RETURN .F.
+	ENDIF
+	lcDestino = NombreCredencialLoginWindows(tnIdEmpresa, tcEmpresaDB, tcUsuario)
+	RETURN CredencialWindowsGuardar(lcDestino, ALLTRIM(tcUsuario), tcClave)
+ENDFUNC
+
+
+FUNCTION LeerClaveLoginWindows
+	LPARAMETERS tnIdEmpresa, tcEmpresaDB, tcUsuario
+	LOCAL lcDestino
+	IF EMPTY(ALLTRIM(NVL(tcEmpresaDB, ""))) OR EMPTY(ALLTRIM(NVL(tcUsuario, "")))
+		RETURN ""
+	ENDIF
+	lcDestino = NombreCredencialLoginWindows(tnIdEmpresa, tcEmpresaDB, tcUsuario)
+	RETURN CredencialWindowsLeer(lcDestino)
+ENDFUNC
+
+
+FUNCTION EliminarClaveLoginWindows
+	LPARAMETERS tnIdEmpresa, tcEmpresaDB, tcUsuario
+	LOCAL lcDestino
+	IF EMPTY(ALLTRIM(NVL(tcEmpresaDB, ""))) OR EMPTY(ALLTRIM(NVL(tcUsuario, "")))
+		RETURN .T.
+	ENDIF
+	lcDestino = NombreCredencialLoginWindows(tnIdEmpresa, tcEmpresaDB, tcUsuario)
+	RETURN CredencialWindowsEliminar(lcDestino)
+ENDFUNC
+
+
+FUNCTION CredencialWindowsGuardar
+	LPARAMETERS tcDestino, tcUsuario, tcSecreto
+	LOCAL lnDestino, lnUsuario, lnSecreto, lnTamSecreto, lcCredencial, llResultado
+	STORE 0 TO lnDestino, lnUsuario, lnSecreto, lnTamSecreto
+	llResultado = .F.
+
+	DECLARE INTEGER GlobalAlloc IN kernel32 INTEGER uFlags, INTEGER dwBytes
+	DECLARE INTEGER GlobalFree IN kernel32 INTEGER hMem
+	DECLARE INTEGER CredWriteA IN advapi32 STRING @Credential, INTEGER Flags
+
+	TRY
+		lnTamSecreto = LEN(tcSecreto)
+		lnDestino = GlobalAlloc(64, LEN(tcDestino) + 1)
+		lnUsuario = GlobalAlloc(64, LEN(tcUsuario) + 1)
+		lnSecreto = GlobalAlloc(64, MAX(1, lnTamSecreto))
+		IF lnDestino <> 0 AND lnUsuario <> 0 AND lnSecreto <> 0
+			=SYS(2600, lnDestino, LEN(tcDestino) + 1, tcDestino + CHR(0))
+			=SYS(2600, lnUsuario, LEN(tcUsuario) + 1, tcUsuario + CHR(0))
+			=SYS(2600, lnSecreto, lnTamSecreto, tcSecreto)
+
+			* CREDENTIALA de 32 bits: CRED_TYPE_GENERIC y persistencia local.
+			lcCredencial = BINTOC(0, "4RS") + BINTOC(1, "4RS") + ;
+				BINTOC(lnDestino, "4RS") + BINTOC(0, "4RS") + ;
+				REPLICATE(CHR(0), 8) + BINTOC(lnTamSecreto, "4RS") + ;
+				BINTOC(lnSecreto, "4RS") + BINTOC(2, "4RS") + ;
+				BINTOC(0, "4RS") + BINTOC(0, "4RS") + ;
+				BINTOC(0, "4RS") + BINTOC(lnUsuario, "4RS")
+			llResultado = CredWriteA(@lcCredencial, 0) <> 0
+		ENDIF
+	CATCH
+		llResultado = .F.
+	FINALLY
+		IF lnSecreto <> 0
+			=SYS(2600, lnSecreto, MAX(1, lnTamSecreto), REPLICATE(CHR(0), MAX(1, lnTamSecreto)))
+			=GlobalFree(lnSecreto)
+		ENDIF
+		IF lnUsuario <> 0
+			=GlobalFree(lnUsuario)
+		ENDIF
+		IF lnDestino <> 0
+			=GlobalFree(lnDestino)
+		ENDIF
+	ENDTRY
+	RETURN llResultado
+ENDFUNC
+
+
+FUNCTION CredencialWindowsLeer
+	LPARAMETERS tcDestino
+	LOCAL lnCredencial, lcCredencial, lnTamSecreto, lnSecreto, lcResultado
+	STORE 0 TO lnCredencial, lnTamSecreto, lnSecreto
+	lcResultado = ""
+
+	DECLARE INTEGER CredReadA IN advapi32 STRING TargetName, INTEGER Type, ;
+		INTEGER Flags, INTEGER @Credential
+	DECLARE INTEGER CredFree IN advapi32 INTEGER Buffer
+
+	TRY
+		IF CredReadA(tcDestino, 1, 0, @lnCredencial) <> 0 AND lnCredencial <> 0
+			lcCredencial = SYS(2600, lnCredencial, 52)
+			lnTamSecreto = CTOBIN(SUBSTR(lcCredencial, 25, 4), "4RS")
+			lnSecreto = CTOBIN(SUBSTR(lcCredencial, 29, 4), "4RS")
+			IF lnTamSecreto > 0 AND lnSecreto <> 0
+				lcResultado = SYS(2600, lnSecreto, lnTamSecreto)
+				=SYS(2600, lnSecreto, lnTamSecreto, REPLICATE(CHR(0), lnTamSecreto))
+			ENDIF
+		ENDIF
+	CATCH
+		lcResultado = ""
+	FINALLY
+		IF lnCredencial <> 0
+			=CredFree(lnCredencial)
+		ENDIF
+	ENDTRY
+	RETURN lcResultado
+ENDFUNC
+
+
+FUNCTION CredencialWindowsEliminar
+	LPARAMETERS tcDestino
+	LOCAL lnResultado, lnError
+	DECLARE INTEGER CredDeleteA IN advapi32 STRING TargetName, INTEGER Type, INTEGER Flags
+	DECLARE INTEGER GetLastError IN kernel32
+	lnResultado = CredDeleteA(tcDestino, 1, 0)
+	IF lnResultado <> 0
+		RETURN .T.
+	ENDIF
+	lnError = GetLastError()
+	* ERROR_NOT_FOUND significa que ya no habia nada que eliminar.
+	RETURN lnError = 1168
+ENDFUNC
+
+
+PROCEDURE CargarClaveLoginRecordada
+	LPARAMETERS toFormulario, tlCargarUltimoUsuario
+	LOCAL lnAreaAnterior, lnIdEmpresa, lcEmpresaDB, lcUsuario, lcClave, lcSeccion, lcCursorEmpresa
+	IF VARTYPE(toFormulario) <> "O" OR !PEMSTATUS(toFormulario, "grd1", 5)
+		RETURN
+	ENDIF
+	lcCursorEmpresa = ALLTRIM(toFormulario.grd1.RecordSource)
+	IF EMPTY(lcCursorEmpresa) OR !USED(lcCursorEmpresa)
+		RETURN
+	ENDIF
+	lnAreaAnterior = SELECT()
+	SELECT (lcCursorEmpresa)
+	IF EOF()
+		IF lnAreaAnterior > 0
+			SELECT (lnAreaAnterior)
+		ENDIF
+		RETURN
+	ENDIF
+	lnIdEmpresa = EVALUATE(lcCursorEmpresa + ".idempresa")
+	lcEmpresaDB = ALLTRIM(EVALUATE(lcCursorEmpresa + ".empresadb"))
+	lcUsuario = ALLTRIM(toFormulario.txtUsuario.Value)
+	IF tlCargarUltimoUsuario
+		lcSeccion = "loginempresa_" + ALLTRIM(STR(lnIdEmpresa))
+		STORE _LeerIni(pcFileUltimoAcceso, lcSeccion, "usuario") TO lcUsuario
+		IF ISNULL(lcUsuario)
+			lcUsuario = ""
+		ENDIF
+		toFormulario.txtUsuario.Value = lcUsuario
+	ENDIF
+	lcClave = ""
+	IF !EMPTY(lcUsuario)
+		lcClave = LeerClaveLoginWindows(lnIdEmpresa, lcEmpresaDB, lcUsuario)
+	ENDIF
+	toFormulario.chkRecuerda.Tag = "CARGANDO"
+	toFormulario.txtClave.Value = lcClave
+	toFormulario.chkRecuerda.Value = IIF(EMPTY(lcClave), 0, 1)
+	toFormulario.chkRecuerda.Tag = ""
+	IF lnAreaAnterior > 0
+		SELECT (lnAreaAnterior)
+	ENDIF
+ENDPROC
+
+
+PROCEDURE EliminarClaveLoginRecordadaActual
+	LPARAMETERS toFormulario
+	LOCAL lnAreaAnterior, lnIdEmpresa, lcEmpresaDB, lcUsuario, lcCursorEmpresa
+	IF VARTYPE(toFormulario) <> "O" OR !PEMSTATUS(toFormulario, "grd1", 5)
+		RETURN
+	ENDIF
+	lcCursorEmpresa = ALLTRIM(toFormulario.grd1.RecordSource)
+	IF EMPTY(lcCursorEmpresa) OR !USED(lcCursorEmpresa)
+		RETURN
+	ENDIF
+	lnAreaAnterior = SELECT()
+	SELECT (lcCursorEmpresa)
+	IF !EOF()
+		lnIdEmpresa = EVALUATE(lcCursorEmpresa + ".idempresa")
+		lcEmpresaDB = ALLTRIM(EVALUATE(lcCursorEmpresa + ".empresadb"))
+		lcUsuario = ALLTRIM(toFormulario.txtUsuario.Value)
+		IF !EMPTY(lcUsuario)
+			=EliminarClaveLoginWindows(lnIdEmpresa, lcEmpresaDB, lcUsuario)
+		ENDIF
+	ENDIF
+	IF lnAreaAnterior > 0
+		SELECT (lnAreaAnterior)
+	ENDIF
+ENDPROC

@@ -43221,6 +43221,117 @@ ENDFUNC
 
 
 
+FUNCTION _ValidarCamposContaAgua
+    LOCAL llOk,llTablaOk,llExiste,lnCampo,lcAviso,loError
+    llOk=.T.
+
+    * Clientes: revisar compartido y pedir exclusivo solo si falta algun campo GPS.
+    llExiste=.T.
+    lcAviso=''
+    TRY
+        USE pcSysDir+pcDB+'\cyvclipro' SHARED AGAIN IN 0 ALIAS cValContaAguaCli
+        llExiste=TYPE("cValContaAguaCli.gpslatitud")<>"U" AND ;
+            TYPE("cValContaAguaCli.gpslongitud")<>"U" AND ;
+            TYPE("cValContaAguaCli.gpsprecision")<>"U" AND ;
+            TYPE("cValContaAguaCli.gpsfecha")<>"U"
+    CATCH TO loError
+        llTablaOk=.F.
+        llOk=.F.
+        lcAviso="No se pudo revisar CYVCLIPRO: "+loError.Message
+    FINALLY
+        IF USED("cValContaAguaCli")
+            USE IN cValContaAguaCli
+        ENDIF
+    ENDTRY
+
+    IF llTablaOk AND !llExiste
+        TRY
+            USE pcSysDir+pcDB+'\cyvclipro' EXCLUSIVE IN 0 ALIAS cActContaAguaCli
+            IF TYPE("cActContaAguaCli.gpslatitud")="U"
+                ALTER TABLE cActContaAguaCli ADD COLUMN gpslatitud N(12,8) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaCli.gpslongitud")="U"
+                ALTER TABLE cActContaAguaCli ADD COLUMN gpslongitud N(13,8) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaCli.gpsprecision")="U"
+                ALTER TABLE cActContaAguaCli ADD COLUMN gpsprecision N(12,2) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaCli.gpsfecha")="U"
+                ALTER TABLE cActContaAguaCli ADD COLUMN gpsfecha T
+            ENDIF
+            lcAviso="Campos GPS actualizados en CYVCLIPRO."
+        CATCH TO loError
+            llOk=.F.
+            lcAviso="Actualizacion pendiente en CYVCLIPRO; la tabla esta siendo utilizada. "+loError.Message
+        FINALLY
+            IF USED("cActContaAguaCli")
+                USE IN cActContaAguaCli
+            ENDIF
+        ENDTRY
+    ENDIF
+    IF !EMPTY(lcAviso)
+        WAIT WINDOW lcAviso NOWAIT
+    ENDIF
+
+    * Lecturas: validar todos los campos y el indice antes de solicitar exclusivo.
+    llExiste=.T.
+    lcAviso=''
+    TRY
+        USE pcSysDir+pcDB+'\cyvlecturas' SHARED AGAIN IN 0 ALIAS cValContaAguaLect
+        llExiste=TYPE("cValContaAguaLect.gpslatitud")<>"U" AND ;
+            TYPE("cValContaAguaLect.gpslongitud")<>"U" AND ;
+            TYPE("cValContaAguaLect.gpsprecision")<>"U" AND ;
+            TYPE("cValContaAguaLect.gpsfecha")<>"U" AND ;
+            TYPE("cValContaAguaLect.syncuuid")<>"U" AND ;
+            TAGNO("syncuuid","cValContaAguaLect")>0
+    CATCH TO loError
+        llTablaOk=.F.
+        llOk=.F.
+        lcAviso="No se pudo revisar CYVLECTURAS: "+loError.Message
+    FINALLY
+        IF USED("cValContaAguaLect")
+            USE IN cValContaAguaLect
+        ENDIF
+    ENDTRY
+
+    IF llTablaOk AND !llExiste
+        TRY
+            USE pcSysDir+pcDB+'\cyvlecturas' EXCLUSIVE IN 0 ALIAS cActContaAguaLect
+            IF TYPE("cActContaAguaLect.gpslatitud")="U"
+                ALTER TABLE cActContaAguaLect ADD COLUMN gpslatitud N(12,8) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaLect.gpslongitud")="U"
+                ALTER TABLE cActContaAguaLect ADD COLUMN gpslongitud N(13,8) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaLect.gpsprecision")="U"
+                ALTER TABLE cActContaAguaLect ADD COLUMN gpsprecision N(12,2) DEFAULT 0
+            ENDIF
+            IF TYPE("cActContaAguaLect.gpsfecha")="U"
+                ALTER TABLE cActContaAguaLect ADD COLUMN gpsfecha T
+            ENDIF
+            IF TYPE("cActContaAguaLect.syncuuid")="U"
+                ALTER TABLE cActContaAguaLect ADD COLUMN syncuuid C(36) DEFAULT ''
+            ENDIF
+            IF TAGNO("syncuuid","cActContaAguaLect")=0
+                SELECT cActContaAguaLect
+                INDEX ON UPPER(ALLTRIM(syncuuid)) TAG syncuuid
+            ENDIF
+            lcAviso="Campos GPS actualizados en CYVLECTURAS."
+        CATCH TO loError
+            llOk=.F.
+            lcAviso="Actualizacion pendiente en CYVLECTURAS; la tabla esta siendo utilizada. "+loError.Message
+        FINALLY
+            IF USED("cActContaAguaLect")
+                USE IN cActContaAguaLect
+            ENDIF
+        ENDTRY
+    ENDIF
+    IF !EMPTY(lcAviso)
+        WAIT WINDOW lcAviso NOWAIT
+    ENDIF
+
+    RETURN llOk
+ENDFUNC
 FUNCTION _ValidarSisVinculos
     LOCAL lcRutaDatos, lcDatabase, lcTabla
     LOCAL lcError, llCreada
@@ -43303,7 +43414,7 @@ FUNCTION _ValidarSisVinculos
             USE IN sisVinculos
         ENDIF
 
-        MESSAGEBOX(lcError, 16, "SIGA Documentos")
+        WAIT WINDOW lcError NOWAIT
         llCreada = .F.
 
     FINALLY
@@ -43323,22 +43434,38 @@ FUNCTION _ValidarSisVinculosCamposNube
     llExiste = .F.
 
     IF !FILE(lcRutaTabla)
-        MESSAGEBOX("No existe sisVinculos. Ejecute primero _ValidarSisVinculos().", 16, "SIGA Documentos")
+        WAIT WINDOW "No existe sisVinculos; la actualizacion queda pendiente." NOWAIT
         RETURN .F.
     ENDIF
 
-    IF USED("cSisVincVal")
-        USE IN cSisVincVal
-    ENDIF
-    USE (lcRutaTabla) SHARED AGAIN IN 0 ALIAS cSisVincVal
-    SELECT cSisVincVal
-    FOR lnCampo = 1 TO FCOUNT()
-        IF UPPER(ALLTRIM(FIELD(lnCampo))) == "TAMANOBY"
-            llExiste = .T.
-            EXIT
+    TRY
+        IF USED("cSisVincVal")
+            USE IN cSisVincVal
         ENDIF
-    ENDFOR
-    USE IN cSisVincVal
+        USE (lcRutaTabla) SHARED AGAIN IN 0 ALIAS cSisVincVal
+        SELECT cSisVincVal
+        FOR lnCampo = 1 TO FCOUNT()
+            IF UPPER(ALLTRIM(FIELD(lnCampo))) == "TAMANOBY"
+                llExiste = .T.
+                EXIT
+            ENDIF
+        ENDFOR
+        llOk = .T.
+    CATCH TO loError
+        llOk = .F.
+        WAIT WINDOW "No se pudo revisar sisVinculos: " + loError.Message NOWAIT
+    FINALLY
+        IF USED("cSisVincVal")
+            USE IN cSisVincVal
+        ENDIF
+    ENDTRY
+
+    IF !llOk
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+        RETURN .F.
+    ENDIF
 
     IF llExiste
         IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
@@ -43400,7 +43527,7 @@ FUNCTION _ValidarSisVinculosCamposNube
 
         llOk = .T.
     CATCH TO loError
-        MESSAGEBOX("No se pudo actualizar sisVinculos: " + loError.Message, 16, "SIGA Documentos")
+        WAIT WINDOW "No se pudo actualizar sisVinculos: " + loError.Message NOWAIT
         llOk = .F.
     FINALLY
         IF USED("sisVinculos")
@@ -43455,7 +43582,7 @@ FUNCTION _ValidarInvProductosCompraLocal()
 	ENDIF 
 	RETURN .t.
 ENDFUNC 
-
+  
 
 FUNCTION ValidarInventariosAutoriza()
 	USE pcSysDir+pcdb+'\InvInventarios' share again IN 0
@@ -44148,7 +44275,7 @@ FUNCTION _ValidarVentasStatusApiIM
 	ENDTRY
 
 	IF !llOk
-		MESSAGEBOX("No se pudo agregar statusApiIM: " + lcError, 16, "Gestion Interna")
+		WAIT WINDOW "No se pudo agregar statusApiIM: " + lcError NOWAIT
 	ENDIF
 	RETURN llOk
 ENDFUNC
