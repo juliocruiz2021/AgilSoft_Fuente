@@ -9989,6 +9989,7 @@ FUNCTION _creaCursorModulos()
 	INSERT INTO sismodulos VALUES (151,'Dashboar Web','080403',1)
 	INSERT INTO sismodulos VALUES (152,'Revision Global de Errores','080404',1)
 	INSERT INTO sismodulos VALUES (153,'Utiliza IA','080405',1)
+	INSERT INTO sismodulos VALUES (154,'Depurar Errores WEB','080406',1)
 
 
 **	INSERT INTO sismodulos VALUES (105,'','090400',1)
