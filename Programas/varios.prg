@@ -12434,6 +12434,7 @@ FUNCTION EnviarEstadoFinancieroaExcel(lnTipoEstFin,lcCurEstFin,lnNumColum,lcTitF
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 	lnColRestar=0
@@ -13358,6 +13359,7 @@ FUNCTION EnviarAnexosConta(lnTipoEstFin,lcCurEstFin,lnNumColum,lcTitFechaEstFin)
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 	lnColRestar=0
@@ -13529,6 +13531,7 @@ FUNCTION EnviarCatalogoaExcel(lnTipoEstFin,lcCurEstFin)
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 
@@ -14071,6 +14074,7 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 	WAIT WINDOW 'Procesando ....' NOWAIT 
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160
 
 	lcCurEstFin = "c_exp_prod"
@@ -14338,6 +14342,7 @@ FUNCTION _Enviar_A_Excel_SAP_OINV(lcmifec)
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 	#DEFINE xlUnderlineStyleSingle 2
@@ -14498,6 +14503,7 @@ FUNCTION _Enviar_A_Excel_SAP_INV1(lcmifec)
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 	#DEFINE xlUnderlineStyleSingle 2
@@ -20018,24 +20024,17 @@ FUNCTION Validarquedan()
 ENDFUNC 
 
 FUNCTION ValidarCorrelativo_SectoresAgua()
-	USE pcSysDir+pcdb+'\sisseries' share again IN 0
-	SELECT sisseries
-	llnoexiste=.f.
+	USE pcSysDir+pcdb+'\sisseries' share again IN 0 ALIAS sss
+	SELECT sss
 	LOCATE FOR idserie=-3
 	IF EOF()
-		llnoexiste=.t.
-	ENDIF 
-	USE IN sisseries
-	IF llnoexiste
-		
-		USE pcSysDir+pcdb+'\sisseries' share again IN 0 ALIAS sss
 		INSERT INTO sss (idserie,codser,serie,inicIal,final,siguiente,digitos,automatica,prefijo,origen,status) ;
-			VALUES (-3,'SEC','SECTORES',1,99,1,2,1,'SEC','INV',1)
-		
-		USE IN sss
-	
-		WAIT CLEAR 
+			VALUES (-3,'SEC','SECTORES',1,999,1,3,1,'SEC','INV',1)
+	ELSE
+		REPLACE final WITH 999,digitos WITH 3,siguiente WITH MAX(1,siguiente),status WITH IIF(siguiente<=999,1,status) IN sss
 	ENDIF 
+	USE IN sss
+	WAIT CLEAR
 	RETURN .t.
 ENDFUNC 
 
@@ -25218,6 +25217,7 @@ FUNCTION EnviaraExcel__old_nousar(lcOpcion,lctablaxls,lnTipoOrden)
 	oExcel = CREATEOBJECT("Excel.Application")
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160
 	#DEFINE xlRight -4152
 
@@ -26796,6 +26796,7 @@ FUNCTION EnviaraExcel(lcOpcion,lctablaxls,lnTipoOrden)
 	oExcel = CREATEOBJECT("Excel.Application")
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160
 	#DEFINE xlRight -4152
 
@@ -28432,6 +28433,7 @@ FUNCTION EnviaraExcel_old(lcOpcion,lctablaxls,lnTipoOrden)
 	oExcel = Createobject("Excel.Application")
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 
@@ -30332,6 +30334,7 @@ FUNCTION EnviaraExcelCompas(lcOpcion,lctablaxls)
 	oExcel = Createobject("Excel.Application")
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 
@@ -35570,6 +35573,7 @@ FUNCTION EnviarAuxiliarExcelData()
 *	_VFP.DataToClip(lcCursor,lnreg,3)
 
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 
@@ -39640,6 +39644,7 @@ FUNCTION Generar_InformeVales_Excel()
 
 	****** generando archivo
 	#DEFINE xlCenter -4108
+	#UNDEFINE xlTop
 	#DEFINE xlTop -4160	
 	#DEFINE xlRight -4152
 
@@ -43608,6 +43613,55 @@ FUNCTION ValidarInventariosAutoriza()
 	ENDIF 
 	RETURN .t.
 ENDFUNC 
+
+
+FUNCTION ValidarventasEnvio()
+	USE pcSysDir+pcdb+'\cyvventas' share again IN 0
+	SELECT cyvventas
+	llexiste=.f.
+	FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
+	   IF ALLTRIM(FIELD(gnCount))=="IDENVIO"  && Display each field
+			llexiste=.T.
+	   ENDIF
+	NEXT
+	USE IN cyvventas
+
+	IF !llexiste
+
+		USE pcSysDir+pcdb+'\cyvventas' EXCLUSIVE IN 0
+		ALTER table cyvventas ADD COLUMN idenvio i DEFAULT 0
+		USE cyvventas
+
+		WAIT CLEAR
+	ENDIF
+	RETURN .t.
+ENDFUNC
+
+
+FUNCTION ValidarUsuariosIA()
+	USE pcSysDir+pcdb+'\sisusuarios' share again IN 0
+	SELECT sisusuarios
+	llexiste=.f.
+	FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
+	   IF ALLTRIM(FIELD(gnCount))=="ES_IA"  && Display each field
+			llexiste=.T.
+	   ENDIF
+	NEXT
+	USE IN sisusuarios
+
+	IF !llexiste
+
+		USE pcSysDir+pcdb+'\sisusuarios' EXCLUSIVE IN 0
+		ALTER table sisusuarios ADD COLUMN es_ia i DEFAULT 0
+		ALTER table sisusuarios ADD COLUMN es_ia_mercadeo i DEFAULT 0
+		ALTER table sisusuarios ADD COLUMN es_ia_ventas i DEFAULT 0
+		ALTER table sisusuarios ADD COLUMN es_ia_soporte i DEFAULT 0
+		USE sisusuarios
+
+		WAIT CLEAR
+	ENDIF
+	RETURN .t.
+ENDFUNC
 
 
 

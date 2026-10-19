@@ -8864,7 +8864,619 @@ FUNCTION cargarArchivoExcelSurtidorCliPRO()
 ENDFUNC 
 
 
+FUNCTION CrearZonasImportacionMasiva
+	LOCAL lcAliasAnterior,lcCodigo,lcCodigoGrupo,lcSector,lcZonasExistentes,lcZona,lnCodigo,lnRepetidos,lnIdSector,llValido,llCodigoExiste
+	lcAliasAnterior=ALIAS()
+	IF !USED("c_cli") OR !USED("clidep")
+		RETURN .F.
+	ENDIF
+	IF USED("c_gru")
+		USE IN c_gru
+	ENDIF
+	SELECT MAX(idgrupo) as idsector,MAX(SPACE(20)) as codSector,grupo as Sector,SPACE(254) as ZonasExistentes ;
+		FROM c_cli WHERE !EMPTY(ALLTRIM(grupo)) ;
+		AND UPPER(ALLTRIM(grupo)) NOT in (SELECT UPPER(ALLTRIM(nombre)) FROM clidep WHERE origen='GRU' AND status=1) ;
+		AND UPPER(ALLTRIM(grupo)) NOT in (SELECT UPPER(ALLTRIM(cod)) FROM clidep WHERE origen='GRU' AND status=1) ;
+		ORDER BY grupo GROUP BY grupo INTO CURSOR c_gru READWRITE
+	IF RECCOUNT("c_gru")=0
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+		RETURN .T.
+	ENDIF
+
+	lcZonasExistentes=""
+	SELECT clidep
+	SCAN FOR origen='GRU' AND status=1 AND !DELETED()
+		lcZona=ALLTRIM(cod)+" - "+ALLTRIM(nombre)
+		IF LEN(lcZonasExistentes)+LEN(lcZona)+3<=254
+			lcZonasExistentes=lcZonasExistentes+IIF(EMPTY(lcZonasExistentes),""," | ")+lcZona
+		ENDIF
+	ENDSCAN
+	SELECT cod FROM clidep WHERE origen='GRU' AND !DELETED() INTO CURSOR c_codzonas READWRITE
+	SELECT c_codzonas
+	REPLACE cod WITH PADL(ALLTRIM(STR(VAL(cod))),3,'0') FOR !EMPTY(ALLTRIM(cod)) AND EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789',''))
+	INDEX ON UPPER(ALLTRIM(cod)) TAG codigo
+	SELECT c_gru
+	REPLACE ZonasExistentes WITH lcZonasExistentes ALL
+	SCAN
+		FOR lnCodigo=1 TO 999
+			lcCodigo=PADL(ALLTRIM(STR(lnCodigo)),3,'0')
+			IF !SEEK(UPPER(lcCodigo),"c_codzonas","codigo")
+				REPLACE codSector WITH lcCodigo IN c_gru
+				INSERT INTO c_codzonas (cod) VALUES (lcCodigo)
+				EXIT
+			ENDIF
+		ENDFOR
+		IF EMPTY(ALLTRIM(codSector))
+			MESSAGEBOX("No hay codigos de zona disponibles entre 001 y 999.",16,"Importacion masiva")
+			USE IN c_codzonas
+			RETURN .F.
+		ENDIF
+	ENDSCAN
+
+	DO WHILE .T.
+		SELECT c_gru
+		BROWSE NORMAL FIELDS codSector:H='CODIGO',Sector:R:H='NUEVA ZONA',ZonasExistentes:R:H='ZONAS EXISTENTES' ;
+			TITLE 'CONFIRME LAS NUEVAS ZONAS (Ctrl+W para continuar)' NODELETE NOAPPEND
+		llValido=.T.
+		SELECT c_gru
+		SCAN
+			lcCodigo=UPPER(ALLTRIM(codSector))
+			REPLACE codSector WITH lcCodigo IN c_gru
+			SELECT clidep
+			LOCATE FOR origen='GRU' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+				(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),3,'0')=lcCodigo))
+			llCodigoExiste=FOUND()
+			IF llCodigoExiste AND status<>1
+				MESSAGEBOX("El codigo "+lcCodigo+" pertenece a una zona inactiva y no se puede reutilizar.",16,"Codigo de zona")
+				llValido=.F.
+			ELSE
+				IF !llCodigoExiste
+					IF LEN(lcCodigo)<>3 OR VAL(lcCodigo)<1 OR VAL(lcCodigo)>999 OR PADL(ALLTRIM(STR(VAL(lcCodigo))),3,'0')<>lcCodigo
+						MESSAGEBOX("El codigo nuevo "+lcCodigo+" debe tener tres digitos entre 001 y 999.",16,"Codigo de zona")
+						llValido=.F.
+					ELSE
+						SELECT c_gru
+						COUNT FOR UPPER(ALLTRIM(codSector))=lcCodigo TO lnRepetidos
+						IF lnRepetidos>1
+							MESSAGEBOX("El codigo "+lcCodigo+" esta repetido entre las zonas nuevas.",16,"Codigo de zona")
+							llValido=.F.
+						ENDIF
+					ENDIF
+				ENDIF
+			ENDIF
+			SELECT c_gru
+			IF !llValido
+				EXIT
+			ENDIF
+		ENDSCAN
+		IF llValido
+			EXIT
+		ENDIF
+	ENDDO
+	IF MESSAGEBOX("Confirma crear o asociar las zonas mostradas?",36,"Importacion masiva")<>6
+		USE IN c_codzonas
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+		RETURN .F.
+	ENDIF
+
+	SELECT c_gru
+	SCAN
+		lcCodigo=UPPER(ALLTRIM(codSector))
+		lcCodigoGrupo=lcCodigo
+		lcSector=UPPER(ALLTRIM(Sector))
+		SELECT clidep
+		LOCATE FOR origen='GRU' AND status=1 AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+			(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),3,'0')=lcCodigo))
+		IF !FOUND()
+			lnIdSector=_SiguienteIdTabla(pcNodo,"MAS")
+			INSERT INTO clidep (id,origen,cod,nombre,idpadre,tipo,notas,ctainvent,ctacosvta,ctaingvta,eliminado,status,;
+				fecalta,fecmod,fecactu,nodo,iduser,pcuser) ;
+				VALUES (lnIdSector,'GRU',lcCodigo,lcSector,0,0,'',0,0,0,0,1,;
+				DATETIME(),DATETIME(),DATETIME(),pcnodo,pnIdUsuario,SYS(0))
+		ELSE
+			lcCodigoGrupo=ALLTRIM(clidep.cod)
+		ENDIF
+		UPDATE c_cli SET grupo=lcCodigoGrupo WHERE UPPER(ALLTRIM(grupo))=lcSector
+		SELECT c_gru
+	ENDSCAN
+	=SincronizarCorrelativoZonasImportacion()
+	USE IN c_codzonas
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
+FUNCTION CrearLectoresImportacionMasiva
+	LOCAL lcAliasAnterior,lcCodigo,lcCodigoLector,lcLector,lcLectoresExistentes,lcVendedor,lnCodigo,lnRepetidos,lnIdLector,llValido,llCodigoExiste
+	lcAliasAnterior=ALIAS()
+	IF !USED("c_cli") OR !USED("clidep")
+		RETURN .F.
+	ENDIF
+	IF USED("c_age")
+		USE IN c_age
+	ENDIF
+	SELECT MAX(idagente) as idlector,MAX(SPACE(20)) as codLector,agente as Lector,SPACE(254) as LectoresExistentes ;
+		FROM c_cli WHERE !EMPTY(ALLTRIM(agente)) ;
+		AND UPPER(ALLTRIM(agente)) NOT in (SELECT UPPER(ALLTRIM(nombre)) FROM clidep WHERE origen='VEN' AND status=1) ;
+		AND UPPER(ALLTRIM(agente)) NOT in (SELECT UPPER(ALLTRIM(cod)) FROM clidep WHERE origen='VEN' AND status=1) ;
+		ORDER BY agente GROUP BY agente INTO CURSOR c_age READWRITE
+	IF RECCOUNT("c_age")=0
+		USE IN c_age
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+		RETURN .T.
+	ENDIF
+
+	lcLectoresExistentes=""
+	SELECT clidep
+	SCAN FOR origen='VEN' AND status=1 AND !DELETED()
+		lcVendedor=ALLTRIM(cod)+" - "+ALLTRIM(nombre)
+		IF LEN(lcLectoresExistentes)+LEN(lcVendedor)+3<=254
+			lcLectoresExistentes=lcLectoresExistentes+IIF(EMPTY(lcLectoresExistentes),""," | ")+lcVendedor
+		ENDIF
+	ENDSCAN
+	SELECT cod FROM clidep WHERE origen='VEN' AND !DELETED() INTO CURSOR c_codlectores READWRITE
+	SELECT c_codlectores
+	REPLACE cod WITH PADL(ALLTRIM(STR(VAL(cod))),2,'0') FOR !EMPTY(ALLTRIM(cod)) AND EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789',''))
+	INDEX ON UPPER(ALLTRIM(cod)) TAG codigo
+	SELECT c_age
+	REPLACE LectoresExistentes WITH lcLectoresExistentes ALL
+	SCAN
+		FOR lnCodigo=1 TO 99
+			lcCodigo=PADL(ALLTRIM(STR(lnCodigo)),2,'0')
+			IF !SEEK(UPPER(lcCodigo),"c_codlectores","codigo")
+				REPLACE codLector WITH lcCodigo IN c_age
+				INSERT INTO c_codlectores (cod) VALUES (lcCodigo)
+				EXIT
+			ENDIF
+		ENDFOR
+		IF EMPTY(ALLTRIM(codLector))
+			MESSAGEBOX("No hay codigos de lector disponibles entre 01 y 99.",16,"Importacion masiva")
+			USE IN c_codlectores
+			USE IN c_age
+			RETURN .F.
+		ENDIF
+	ENDSCAN
+
+	DO WHILE .T.
+		SELECT c_age
+		BROWSE NORMAL FIELDS codLector:H='CODIGO',Lector:R:H='NUEVO LECTOR',LectoresExistentes:R:H='LECTORES / VENDEDORES EXISTENTES' ;
+			TITLE 'CONFIRME LOS NUEVOS LECTORES (Ctrl+W para continuar)' NODELETE NOAPPEND
+		llValido=.T.
+		SELECT c_age
+		SCAN
+			lcCodigo=UPPER(ALLTRIM(codLector))
+			REPLACE codLector WITH lcCodigo IN c_age
+			SELECT clidep
+			LOCATE FOR origen='VEN' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+				(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),2,'0')=lcCodigo))
+			llCodigoExiste=FOUND()
+			IF llCodigoExiste AND status<>1
+				MESSAGEBOX("El codigo "+lcCodigo+" pertenece a un lector inactivo y no se puede reutilizar.",16,"Codigo de lector")
+				llValido=.F.
+			ELSE
+				IF !llCodigoExiste
+					IF LEN(lcCodigo)<>2 OR VAL(lcCodigo)<1 OR VAL(lcCodigo)>99 OR PADL(ALLTRIM(STR(VAL(lcCodigo))),2,'0')<>lcCodigo
+						MESSAGEBOX("El codigo nuevo "+lcCodigo+" debe tener dos digitos entre 01 y 99.",16,"Codigo de lector")
+						llValido=.F.
+					ELSE
+						SELECT c_age
+						COUNT FOR UPPER(ALLTRIM(codLector))=lcCodigo TO lnRepetidos
+						IF lnRepetidos>1
+							MESSAGEBOX("El codigo "+lcCodigo+" esta repetido entre los lectores nuevos.",16,"Codigo de lector")
+							llValido=.F.
+						ENDIF
+					ENDIF
+				ENDIF
+			ENDIF
+			SELECT c_age
+			IF !llValido
+				EXIT
+			ENDIF
+		ENDSCAN
+		IF llValido
+			EXIT
+		ENDIF
+	ENDDO
+	IF MESSAGEBOX("Confirma crear o asociar los lectores mostrados?",36,"Importacion masiva")<>6
+		USE IN c_codlectores
+		USE IN c_age
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+		RETURN .F.
+	ENDIF
+
+	SELECT c_age
+	SCAN
+		lcCodigo=UPPER(ALLTRIM(codLector))
+		lcCodigoLector=lcCodigo
+		lcLector=UPPER(ALLTRIM(Lector))
+		SELECT clidep
+		LOCATE FOR origen='VEN' AND status=1 AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+			(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),2,'0')=lcCodigo))
+		IF !FOUND()
+			lnIdLector=_SiguienteIdTabla(pcNodo,"MAS")
+			INSERT INTO clidep (id,origen,cod,nombre,idpadre,tipo,notas,ctainvent,ctacosvta,ctaingvta,eliminado,status,;
+				fecalta,fecmod,fecactu,nodo,iduser,pcuser) ;
+				VALUES (lnIdLector,'VEN',lcCodigo,lcLector,151,0,'',0,0,0,0,1,;
+				DATETIME(),DATETIME(),DATETIME(),pcnodo,pnIdUsuario,SYS(0))
+		ELSE
+			lcCodigoLector=ALLTRIM(clidep.cod)
+		ENDIF
+		UPDATE c_cli SET agente=lcCodigoLector WHERE UPPER(ALLTRIM(agente))=lcLector
+		SELECT c_age
+	ENDSCAN
+	USE IN c_codlectores
+	USE IN c_age
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
+FUNCTION ConvertirFechaImportacionClientes
+	LPARAMETERS tuValor,tcFormato,tlValida
+	LOCAL lcFecha,lcFormato,lnDia,lnMes,lnAnio,ldFecha,loError
+	tlValida=.T.
+	IF VARTYPE(tuValor)="D"
+		RETURN tuValor
+	ENDIF
+	IF VARTYPE(tuValor)="T"
+		RETURN TTOD(tuValor)
+	ENDIF
+	lcFecha=ALLTRIM(TRANSFORM(tuValor))
+	IF EMPTY(lcFecha)
+		RETURN CTOD("")
+	ENDIF
+	lcFecha=STRTRAN(STRTRAN(lcFecha,"-","/"),".","/")
+	IF GETWORDCOUNT(lcFecha,"/")<>3
+		tlValida=.F.
+		RETURN CTOD("")
+	ENDIF
+	lcFormato=UPPER(ALLTRIM(tcFormato))
+	DO CASE
+	CASE LEN(GETWORDNUM(lcFecha,1,"/"))=4
+		lnAnio=VAL(GETWORDNUM(lcFecha,1,"/"))
+		lnMes=VAL(GETWORDNUM(lcFecha,2,"/"))
+		lnDia=VAL(GETWORDNUM(lcFecha,3,"/"))
+	CASE lcFormato="M/D/A"
+		lnMes=VAL(GETWORDNUM(lcFecha,1,"/"))
+		lnDia=VAL(GETWORDNUM(lcFecha,2,"/"))
+		lnAnio=VAL(GETWORDNUM(lcFecha,3,"/"))
+	CASE lcFormato="A/M/D"
+		lnAnio=VAL(GETWORDNUM(lcFecha,1,"/"))
+		lnMes=VAL(GETWORDNUM(lcFecha,2,"/"))
+		lnDia=VAL(GETWORDNUM(lcFecha,3,"/"))
+	OTHERWISE
+		lnDia=VAL(GETWORDNUM(lcFecha,1,"/"))
+		lnMes=VAL(GETWORDNUM(lcFecha,2,"/"))
+		lnAnio=VAL(GETWORDNUM(lcFecha,3,"/"))
+	ENDCASE
+	IF lnAnio>=0 AND lnAnio<100
+		lnAnio=2000+lnAnio
+	ENDIF
+	IF lnDia<1 OR lnDia>31 OR lnMes<1 OR lnMes>12 OR lnAnio<1900 OR lnAnio>9999
+		tlValida=.F.
+		RETURN CTOD("")
+	ENDIF
+	TRY
+		ldFecha=DATE(lnAnio,lnMes,lnDia)
+	CATCH TO loError
+		tlValida=.F.
+		RETURN CTOD("")
+	ENDTRY
+	IF YEAR(ldFecha)<>lnAnio OR MONTH(ldFecha)<>lnMes OR DAY(ldFecha)<>lnDia
+		tlValida=.F.
+		RETURN CTOD("")
+	ENDIF
+	RETURN ldFecha
+ENDFUNC
+
+
+FUNCTION RegistrarLogImportacionClientes
+	LPARAMETERS tcArchivoLog,tcTipo,tcValor,tcResultado,tcDetalle
+	LOCAL lcLinea
+	IF EMPTY(tcArchivoLog)
+		RETURN .F.
+	ENDIF
+	lcLinea=TTOC(DATETIME(),1)+" | "+UPPER(ALLTRIM(tcTipo))+" | "+ALLTRIM(tcResultado)+" | "+;
+		STRTRAN(STRTRAN(ALLTRIM(TRANSFORM(tcValor)),CHR(13)," "),CHR(10)," ")+" | "+;
+		STRTRAN(STRTRAN(ALLTRIM(TRANSFORM(tcDetalle)),CHR(13)," "),CHR(10)," ")+CHR(13)+CHR(10)
+	RETURN STRTOFILE(lcLinea,tcArchivoLog,1)>0
+ENDFUNC
+
+
+FUNCTION RegistrarResultadoImportacionClientes
+	LPARAMETERS tnFilaExcel,tcCodigo,tcEstado,tcMensaje
+	LOCAL lcCodigo,lcEstado,lcMensaje
+	IF !USED("c_resultadoImportacionClientes") OR VARTYPE(tnFilaExcel)<>"N" OR tnFilaExcel<2
+		RETURN .F.
+	ENDIF
+	lcCodigo=LEFT(ALLTRIM(TRANSFORM(tcCodigo)),40)
+	lcEstado=LEFT(UPPER(ALLTRIM(TRANSFORM(tcEstado))),20)
+	lcMensaje=LEFT(STRTRAN(STRTRAN(ALLTRIM(TRANSFORM(tcMensaje)),CHR(13)," "),CHR(10)," "),254)
+	SELECT c_resultadoImportacionClientes
+	LOCATE FOR filaexcel=tnFilaExcel
+	IF FOUND()
+		REPLACE codigo WITH lcCodigo,estado WITH lcEstado,mensaje WITH lcMensaje IN c_resultadoImportacionClientes
+	ELSE
+		INSERT INTO c_resultadoImportacionClientes (filaexcel,codigo,estado,mensaje) ;
+			VALUES (tnFilaExcel,lcCodigo,lcEstado,lcMensaje)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
+FUNCTION GenerarExcelResultadoImportacionClientes
+	LPARAMETERS tcArchivoFuente,tcCursorResultado,tnTotal,tnSinError,tnConError
+	LOCAL lcExtension,lcBaseResultado,lcArchivoResultado,lnConsecutivo,oExcel,loLibro,loMensajes,loResumen
+	LOCAL lnUltimaCol,lnUltimaFilaResultado,lnFilasHoja,lcAliasAnterior,loError
+	IF EMPTY(tcArchivoFuente) OR !FILE(tcArchivoFuente) OR EMPTY(tcCursorResultado) OR !USED(tcCursorResultado)
+		RETURN ""
+	ENDIF
+	lcExtension=LOWER(JUSTEXT(tcArchivoFuente))
+	IF EMPTY(lcExtension)
+		lcExtension="xlsx"
+	ENDIF
+	lcBaseResultado=ADDBS(JUSTPATH(tcArchivoFuente))+JUSTSTEM(tcArchivoFuente)+"_RESULTADO_"+LEFT(DTOS(DATE()),4)+"-"+SUBSTR(DTOS(DATE()),5,2)+"-"+RIGHT(DTOS(DATE()),2)
+	lcArchivoResultado=lcBaseResultado+"."+lcExtension
+	lnConsecutivo=1
+	DO WHILE FILE(lcArchivoResultado)
+		lcArchivoResultado=lcBaseResultado+" ("+ALLTRIM(STR(lnConsecutivo))+" )."+lcExtension
+		lcArchivoResultado=STRTRAN(lcArchivoResultado," )",")")
+		lnConsecutivo=lnConsecutivo+1
+	ENDDO
+
+	TRY
+		COPY FILE (tcArchivoFuente) TO (lcArchivoResultado)
+		oExcel=CREATEOBJECT("Excel.Application")
+		oExcel.Visible=.F.
+		oExcel.DisplayAlerts=.F.
+		loLibro=oExcel.Workbooks.Open(lcArchivoResultado)
+		loMensajes=loLibro.Worksheets(1)
+		loMensajes.Name="Mensajes"
+		lnUltimaCol=loMensajes.UsedRange.Columns.Count
+		loMensajes.Cells(1,lnUltimaCol+1).Value="ESTADO"
+		loMensajes.Cells(1,lnUltimaCol+2).Value="MENSAJE"
+		loMensajes.Cells(1,lnUltimaCol+1).Font.Bold=.T.
+		loMensajes.Cells(1,lnUltimaCol+2).Font.Bold=.T.
+
+		lcAliasAnterior=ALIAS()
+		lnUltimaFilaResultado=1
+		SELECT (tcCursorResultado)
+		SCAN
+			loMensajes.Cells(filaexcel,lnUltimaCol+1).Value=ALLTRIM(estado)
+			loMensajes.Cells(filaexcel,lnUltimaCol+2).Value=ALLTRIM(mensaje)
+			lnUltimaFilaResultado=MAX(lnUltimaFilaResultado,filaexcel)
+		ENDSCAN
+		lnFilasHoja=loMensajes.UsedRange.Rows.Count
+		IF lnFilasHoja>lnUltimaFilaResultado
+			loMensajes.Rows(ALLTRIM(STR(lnUltimaFilaResultado+1))+":"+ALLTRIM(STR(lnFilasHoja))).Delete
+		ENDIF
+		loMensajes.Columns(lnUltimaCol+1).AutoFit
+		loMensajes.Columns(lnUltimaCol+2).ColumnWidth=70
+		loMensajes.Rows(1).AutoFilter
+
+		loResumen=loLibro.Worksheets.Add()
+		loResumen.Name="Resumen"
+		loMensajes.Move(loResumen)
+		loResumen.Cells(1,1).Value="ARCHIVO ORIGINAL"
+		loResumen.Cells(1,2).Value=JUSTFNAME(tcArchivoFuente)
+		loResumen.Cells(2,1).Value="PROCESO"
+		loResumen.Cells(2,2).Value="RESULTADO DE LA CARGA"
+		loResumen.Cells(3,1).Value="TOTAL"
+		loResumen.Cells(3,2).Value=tnTotal
+		loResumen.Cells(4,1).Value="SIN ERROR"
+		loResumen.Cells(4,2).Value=tnSinError
+		loResumen.Cells(5,1).Value="CON ERROR"
+		loResumen.Cells(5,2).Value=tnConError
+		loResumen.Cells(6,1).Value="FORMATO DE FECHA"
+		loResumen.Cells(6,2).Value="Dia / mes / anio"
+		loResumen.Range("A1:A6").Font.Bold=.T.
+		loResumen.Range("A1:B6").Borders.LineStyle=1
+		loResumen.Columns("A:B").AutoFit
+
+		loLibro.Save()
+		loLibro.Close(.T.)
+		oExcel.Quit
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	CATCH TO loError
+		IF VARTYPE(loLibro)="O"
+			loLibro.Close(.F.)
+		ENDIF
+		IF VARTYPE(oExcel)="O"
+			oExcel.Quit
+		ENDIF
+		IF FILE(lcArchivoResultado)
+			DELETE FILE (lcArchivoResultado)
+		ENDIF
+		RETURN ""
+	ENDTRY
+	RETURN lcArchivoResultado
+ENDFUNC
+
+
+FUNCTION CrearZonasImportacionMasivaAutomatico
+	LPARAMETERS tcArchivoLog,tnAgregadas,tnNoAgregadas
+	LOCAL lcAliasAnterior,lcCodigo,lcSector,lcPrefijo,lcCaracter,lnCodigo,lnIdSector,lnPos,llDisponible,loError
+	tnAgregadas=0
+	tnNoAgregadas=0
+	lcAliasAnterior=ALIAS()
+	IF !USED("c_cli") OR !USED("clidep")
+		=RegistrarLogImportacionClientes(tcArchivoLog,"ZONA","","NO AGREGADA","No estan disponibles los cursores c_cli y clidep.")
+		RETURN .F.
+	ENDIF
+	IF USED("c_gru_auto")
+		USE IN c_gru_auto
+	ENDIF
+	SELECT grupo as Sector FROM c_cli WHERE !EMPTY(ALLTRIM(grupo)) ;
+		AND UPPER(ALLTRIM(grupo)) NOT in (SELECT UPPER(ALLTRIM(nombre)) FROM clidep WHERE origen='GRU' AND status=1) ;
+		AND UPPER(ALLTRIM(grupo)) NOT in (SELECT UPPER(ALLTRIM(cod)) FROM clidep WHERE origen='GRU' AND status=1) ;
+		ORDER BY grupo GROUP BY grupo INTO CURSOR c_gru_auto READWRITE
+	SELECT c_gru_auto
+	SCAN
+		lcSector=UPPER(ALLTRIM(Sector))
+		lcCodigo=""
+		lcPrefijo=""
+		FOR lnPos=1 TO MIN(4,LEN(lcSector))
+			lcCaracter=SUBSTR(lcSector,lnPos,1)
+			IF !BETWEEN(lcCaracter,"0","9")
+				EXIT
+			ENDIF
+			lcPrefijo=lcPrefijo+lcCaracter
+		ENDFOR
+		llDisponible=.F.
+		IF BETWEEN(LEN(lcPrefijo),1,3) AND BETWEEN(VAL(lcPrefijo),1,999)
+			lcCodigo=PADL(ALLTRIM(STR(VAL(lcPrefijo))),3,'0')
+			SELECT clidep
+			LOCATE FOR origen='GRU' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+				(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),3,'0')=lcCodigo))
+			llDisponible=!FOUND()
+		ENDIF
+		IF !llDisponible
+			FOR lnCodigo=1 TO 999
+				lcCodigo=PADL(ALLTRIM(STR(lnCodigo)),3,'0')
+				SELECT clidep
+				LOCATE FOR origen='GRU' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+					(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),3,'0')=lcCodigo))
+				llDisponible=!FOUND()
+				IF llDisponible
+					EXIT
+				ENDIF
+			ENDFOR
+		ENDIF
+		IF EMPTY(lcCodigo) OR !llDisponible
+			tnNoAgregadas=tnNoAgregadas+1
+			=RegistrarLogImportacionClientes(tcArchivoLog,"ZONA",lcSector,"NO AGREGADA","No hay codigos disponibles entre 001 y 999.")
+		ELSE
+			TRY
+				lnIdSector=_SiguienteIdTabla(pcNodo,"MAS")
+				INSERT INTO clidep (id,origen,cod,nombre,idpadre,tipo,notas,ctainvent,ctacosvta,ctaingvta,eliminado,status,;
+					fecalta,fecmod,fecactu,nodo,iduser,pcuser) ;
+					VALUES (lnIdSector,'GRU',lcCodigo,lcSector,0,0,'',0,0,0,0,1,;
+					DATETIME(),DATETIME(),DATETIME(),pcnodo,pnIdUsuario,SYS(0))
+				UPDATE c_cli SET grupo=lcCodigo WHERE UPPER(ALLTRIM(grupo))=lcSector
+				tnAgregadas=tnAgregadas+1
+				=RegistrarLogImportacionClientes(tcArchivoLog,"ZONA",lcSector,"AGREGADA","Codigo "+lcCodigo)
+			CATCH TO loError
+				tnNoAgregadas=tnNoAgregadas+1
+				=RegistrarLogImportacionClientes(tcArchivoLog,"ZONA",lcSector,"NO AGREGADA",loError.Message)
+			ENDTRY
+		ENDIF
+		SELECT c_gru_auto
+	ENDSCAN
+	IF tnAgregadas>0
+		=SincronizarCorrelativoZonasImportacion()
+	ENDIF
+	USE IN c_gru_auto
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
+FUNCTION CrearLectoresImportacionMasivaAutomatico
+	LPARAMETERS tcArchivoLog,tnAgregados,tnNoAgregados
+	LOCAL lcAliasAnterior,lcCodigo,lcLector,lnCodigo,lnIdLector,llDisponible,loError
+	tnAgregados=0
+	tnNoAgregados=0
+	lcAliasAnterior=ALIAS()
+	IF !USED("c_cli") OR !USED("clidep")
+		=RegistrarLogImportacionClientes(tcArchivoLog,"LECTOR","","NO AGREGADO","No estan disponibles los cursores c_cli y clidep.")
+		RETURN .F.
+	ENDIF
+	IF USED("c_age_auto")
+		USE IN c_age_auto
+	ENDIF
+	SELECT agente as Lector FROM c_cli WHERE !EMPTY(ALLTRIM(agente)) ;
+		AND UPPER(ALLTRIM(agente)) NOT in (SELECT UPPER(ALLTRIM(nombre)) FROM clidep WHERE origen='VEN' AND status=1) ;
+		AND UPPER(ALLTRIM(agente)) NOT in (SELECT UPPER(ALLTRIM(cod)) FROM clidep WHERE origen='VEN' AND status=1) ;
+		ORDER BY agente GROUP BY agente INTO CURSOR c_age_auto READWRITE
+	SELECT c_age_auto
+	SCAN
+		lcLector=UPPER(ALLTRIM(Lector))
+		lcCodigo=""
+		FOR lnCodigo=1 TO 99
+			lcCodigo=PADL(ALLTRIM(STR(lnCodigo)),2,'0')
+			SELECT clidep
+			LOCATE FOR origen='VEN' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+				(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),2,'0')=lcCodigo))
+			llDisponible=!FOUND()
+			IF llDisponible
+				EXIT
+			ENDIF
+		ENDFOR
+		IF EMPTY(lcCodigo) OR !llDisponible
+			tnNoAgregados=tnNoAgregados+1
+			=RegistrarLogImportacionClientes(tcArchivoLog,"LECTOR",lcLector,"NO AGREGADO","No hay codigos disponibles entre 01 y 99.")
+		ELSE
+			TRY
+				lnIdLector=_SiguienteIdTabla(pcNodo,"MAS")
+				INSERT INTO clidep (id,origen,cod,nombre,idpadre,tipo,notas,ctainvent,ctacosvta,ctaingvta,eliminado,status,;
+					fecalta,fecmod,fecactu,nodo,iduser,pcuser) ;
+					VALUES (lnIdLector,'VEN',lcCodigo,lcLector,151,0,'',0,0,0,0,1,;
+					DATETIME(),DATETIME(),DATETIME(),pcnodo,pnIdUsuario,SYS(0))
+				UPDATE c_cli SET agente=lcCodigo WHERE UPPER(ALLTRIM(agente))=lcLector
+				tnAgregados=tnAgregados+1
+				=RegistrarLogImportacionClientes(tcArchivoLog,"LECTOR",lcLector,"AGREGADO","Codigo "+lcCodigo)
+			CATCH TO loError
+				tnNoAgregados=tnNoAgregados+1
+				=RegistrarLogImportacionClientes(tcArchivoLog,"LECTOR",lcLector,"NO AGREGADO",loError.Message)
+			ENDTRY
+		ENDIF
+		SELECT c_age_auto
+	ENDSCAN
+	USE IN c_age_auto
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
+FUNCTION SincronizarCorrelativoZonasImportacion
+	LOCAL lcAliasAnterior,lcCodigo,lnCodigo,lnSiguiente
+	lcAliasAnterior=ALIAS()
+	=ValidarCorrelativo_SectoresAgua()
+	lnSiguiente=1000
+	FOR lnCodigo=1 TO 999
+		lcCodigo=PADL(ALLTRIM(STR(lnCodigo)),3,'0')
+		SELECT clidep
+		LOCATE FOR origen='GRU' AND !DELETED() AND (UPPER(ALLTRIM(cod))=lcCodigo OR ;
+			(EMPTY(CHRTRAN(ALLTRIM(cod),'0123456789','')) AND PADL(ALLTRIM(STR(VAL(cod))),3,'0')=lcCodigo))
+		IF !FOUND()
+			lnSiguiente=lnCodigo
+			EXIT
+		ENDIF
+	ENDFOR
+	USE pcSysDir+pcdb+'\sisseries' SHARE AGAIN IN 0 ALIAS zser
+	SELECT zser
+	LOCATE FOR idserie=-3
+	IF FOUND()
+		REPLACE inicial WITH 1,final WITH 999,siguiente WITH lnSiguiente,digitos WITH 3,status WITH IIF(lnSiguiente<=999,1,0) IN zser
+	ENDIF
+	USE IN zser
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ENDIF
+	RETURN .T.
+ENDFUNC
+
+
 FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
+	LOCAL llFechaValida,ldFechaImportacion
 	lcaliaspelexls=ALIAS()
 	USE pcsysdir+pcDB+"\cyvclipro" IN 0 SHARED AGAIN ALIAS cli
 	USE pcsysdir+pcDB+"\siscata" IN 0 SHARED AGAIN ALIAS clidep
@@ -8895,13 +9507,28 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 			000000000.000000 as sal,SPACE(1) as not,status,000000000 as idli,000000000 as iddepto,000000000 as idmuni,;
 			SPACE(20) as codmuni,SPACE(20) as coddepto, 000000000 as idgrupo,SPACE(100) as grupo,idsucursal,SPACE(20) as codsuc,;
 			000000000 as idtarifa, SPACE(100) as tarifa,000000000 as ultimalectura,fecultilectura,codpais,nacionalidad,;
-			SPACE(30) as ctacontable,000000000 as idctacontable,SPACE(20) as agente,000000000 as idagente,000000000.00 as saldo,CTOD(" ") as fechadoc,micromedidor  ;
+			SPACE(30) as ctacontable,000000000 as idctacontable,SPACE(20) as agente,000000000 as idagente,000000000.00 as saldo,CTOD(" ") as fechadoc,;
+			SPACE(30) as fechalecturatexto,micromedidor,000000000 as filaexcel ;
 		FROM cli WHERE idclipro=0 into cursor c_cli READWRITE
 	llmalos=.t.
 	
 	lcFileXls=GETFILE('xls,xlsx')
 	SET DEFAULT TO (pcsysdir)
 	IF !EMPTY(lcFileXls)
+		lcLogImportacion=ADDBS(JUSTPATH(lcFileXls))+JUSTSTEM(lcFileXls)+"_LOG_"+DTOS(DATE())+"_"+STRTRAN(TIME(),":","")+".txt"
+		IF USED("c_resultadoImportacionClientes")
+			USE IN c_resultadoImportacionClientes
+		ENDIF
+		CREATE CURSOR c_resultadoImportacionClientes (filaexcel I,codigo C(40),estado C(20),mensaje C(254))
+		lnZonasAgregadas=0
+		lnZonasNoAgregadas=0
+		lnLectoresAgregados=0
+		lnLectoresNoAgregados=0
+		lnFilasNoAgregadas=0
+		lnClientesPreparados=0
+		lnClientesAgregados=0
+		=STRTOFILE("LOG DE IMPORTACION MASIVA DE USUARIOS / CLIENTES"+CHR(13)+CHR(10)+;
+			"Archivo: "+lcFileXls+CHR(13)+CHR(10)+"Inicio: "+TTOC(DATETIME(),1)+CHR(13)+CHR(10)+CHR(13)+CHR(10),lcLogImportacion,0)
 		WAIT WINDOW 'Importando Registros.... ' NOWAIT 
 		Local oExcel,llConDeta
 		llConDeta=.f.
@@ -8960,16 +9587,29 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 					IF TYPE("lcxlsTEL")="N"
 						lcxlsTEL =ALLTRIM(STR(lcxlsTEL))
 					ENDIF 
+					IF TYPE("lcxlsCORRe")<>"C"
+						lcxlsCORRe=ALLTRIM(TRANSFORM(lcxlsCORRe))
+					ENDIF
+					IF EMPTY(ALLTRIM(lcxlsTEL))
+						lcxlsTEL="7000-0000"
+					ENDIF
+					IF EMPTY(ALLTRIM(lcxlsCORRe))
+						lcxlsCORRe="noenviar@gmail.com"
+					ENDIF
 					IF TYPE("lcxlsMMD")<>"C"
 						lcxlsMMD=ALLTRIM(STR(lcxlsMMD))
 					ELSE
 						lcxlsMMD=ALLTRIM(lcxlsMMD)
 					ENDIF 
 					
-					IF TYPE("lcxlsFEC")="D" OR TYPE("lcxlsFEC")="T" 
-					ELSE
-						lcxlsFEC=CTOD(lcxlsFEC)
-					ENDIF 
+					DO CASE
+					CASE TYPE("lcxlsFEC")="D"
+						lcFechaOriginal=ALLTRIM(STR(YEAR(lcxlsFEC),4))+"/"+PADL(ALLTRIM(STR(MONTH(lcxlsFEC))),2,"0")+"/"+PADL(ALLTRIM(STR(DAY(lcxlsFEC))),2,"0")
+					CASE TYPE("lcxlsFEC")="T"
+						lcFechaOriginal=ALLTRIM(STR(YEAR(TTOD(lcxlsFEC)),4))+"/"+PADL(ALLTRIM(STR(MONTH(TTOD(lcxlsFEC)))),2,"0")+"/"+PADL(ALLTRIM(STR(DAY(TTOD(lcxlsFEC)))),2,"0")
+					OTHERWISE
+						lcFechaOriginal=ALLTRIM(TRANSFORM(lcxlsFEC))
+					ENDCASE
 					IF TYPE("lcxlsLEC")<>"N"
 						lcxlsLEC=VAL(lcxlsLEC)
 					ENDIF 
@@ -8986,12 +9626,13 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 					
 					lnCtrol=1
 					
-					INSERT INTO c_cli (codclipro,clipro,grupo,direccion,celular,correodte,tarifa,ultimalectura,tipoclipro,dui,nit,nrc,giro,;									
+					INSERT INTO c_cli (codclipro,clipro,grupo,direccion,celular,correodte,tarifa,ultimalectura,tipoclipro,dui,nit,nrc,giro,;
 									tipoiva,condipago,diascredito,limitecredito,codsuc,codmuni,coddepto,tipocontri,fecultilectura,;
-									ctacontable,agente,micromedidor,codpais,nacionalidad) ;
+									fechalecturatexto,ctacontable,agente,micromedidor,codpais,nacionalidad,filaexcel) ;
 								VALUES (lcxlsCod,lcxlsnom,lcxlssec,lcxlsdir,lcxlstel,lcxlsCORRe,lcxlstar,lcxlslec,IIF(lcMiOrigenCXCP="CLI",1,2),lcxlsDUI,lcxlsNIT,lcxlsNRC,;
-									lcxlsGIRO,lcxlsTIVA,lcxlsCPAG,NVL(lcxlsDCRE,00000),lcxlsLCRE,lcxlsSUC,lcxlsMUN,lcxlsDEP,lcxlsTCON,lcxlsFEC,;
-									lcxlsCTB,lcxlsAGE,lcxlsMMD,'SV','SALVADOREÑO')
+									lcxlsGIRO,lcxlsTIVA,lcxlsCPAG,NVL(lcxlsDCRE,00000),lcxlsLCRE,lcxlsSUC,lcxlsMUN,lcxlsDEP,lcxlsTCON,CTOD(""),;
+									lcFechaOriginal,lcxlsCTB,lcxlsAGE,lcxlsMMD,'SV','SALVADOREÑO',lnxlsLin)
+					=RegistrarResultadoImportacionClientes(lnxlsLin,lcxlsCod,"PENDIENTE","Pendiente de procesar.")
 				ELSE
 					lnCtrol=0
 					lcxlsCod=''
@@ -9004,36 +9645,136 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 				ENDIF 
 			ENDDO 
 
+			lcFormatoFecha="D/M/A"
+			lnFechasInvalidas=0
+			SELECT c_cli
+			SCAN
+				ldFechaImportacion=ConvertirFechaImportacionClientes(fechalecturatexto,lcFormatoFecha,@llFechaValida)
+				IF llFechaValida
+					REPLACE fecultilectura WITH ldFechaImportacion IN c_cli
+				ELSE
+					lnFechasInvalidas=lnFechasInvalidas+1
+					lnFilasNoAgregadas=lnFilasNoAgregadas+1
+					=RegistrarLogImportacionClientes(lcLogImportacion,"USUARIO",codclipro,"NO AGREGADO",;
+						"La fecha de lectura '"+ALLTRIM(fechalecturatexto)+"' no es valida.")
+					=RegistrarResultadoImportacionClientes(filaexcel,codclipro,"ERROR",;
+						"La fecha de lectura '"+ALLTRIM(fechalecturatexto)+"' no es valida.")
+					DELETE IN c_cli
+				ENDIF
+			ENDSCAN
+			=RegistrarLogImportacionClientes(lcLogImportacion,"FORMATO DE FECHA",lcFormatoFecha,"FIJO",;
+				"SIGA no solicita formato; las fechas no validas se informan y no se cargan.")
+			IF lnFechasInvalidas>0
+				lnContinuarImportacion=MESSAGEBOX("No se reconocieron "+ALLTRIM(STR(lnFechasInvalidas))+" fecha(s)."+CHR(13)+CHR(10)+;
+					"Esas filas quedaron como error en el log:"+CHR(13)+CHR(10)+lcLogImportacion+CHR(13)+CHR(10)+CHR(13)+CHR(10)+;
+					"Desea continuar y cargar solamente las filas validas?",36,"Log de carga generado")
+				IF lnContinuarImportacion<>6
+					=RegistrarLogImportacionClientes(lcLogImportacion,"IMPORTACION","","CANCELADA",;
+						"El usuario decidio no cargar los registros validos despues de revisar los errores.")
+					.DisplayAlerts = .F.
+					.Workbooks.Close
+					.QUIT
+					USE IN c_cli
+					USE IN clidep
+					USE IN clictb
+					USE IN clitar
+					USE IN cli
+					IF !EMPTY(lcaliaspelexls) AND USED(lcaliaspelexls)
+						SELECT (lcaliaspelexls)
+					ENDIF
+					RETURN .F.
+				ENDIF
+				=RegistrarLogImportacionClientes(lcLogImportacion,"IMPORTACION","","CONTINUAR",;
+					"El usuario autorizo cargar solamente los registros validos.")
+			ENDIF
+
 			GO top
 
 			ldfec=datetime()
 			IF !EOF()
-				SELECT MAX(idgrupo) as idsector,MAX(SPACE(20)) as codSector,grupo as Sector ;
-					FROM c_cli WHERE grupo NOT in (SELECT UPPER(nombre) as nombre FROM clidep WHERE origen='GRU');
-					ORDER BY grupo GROUP BY grupo  ;
-					INTO CURSOR c_gru READWRITE
-				IF !EOF()
-					*BROWSE FIELDS codsector,sector FREEZE codsector TITLE "INGRESE LOS CODIGOS DE LOS NUEVOS GRUPOS (Ctrl+W para Guardar)"
-					REPLACE idsector WITH _SiguienteIdTabla(pcNodo,"MAS") ALL 
-					REPLACE CODsector WITH AsignaNumeroSerie(1,-3) all
-					INSERT INTO clidep (id,origen,cod,nombre,status,fecalta,fecmod,nodo,iduser,pcuser) ;
-						SELECT idsector,'GRU',CODsector,UPPER(sector) as sector,1,ldfec,ldfec,pcnodo,pnIdUsuario,SYS(0) ;
-							FROM c_gru WHERE codsector NOT in (select cod FROM clidep WHERE origen='GRU')
-							
-				ENDIF 
+				IF !CrearZonasImportacionMasivaAutomatico(lcLogImportacion,@lnZonasAgregadas,@lnZonasNoAgregadas)
+					.DisplayAlerts = .F.
+					.Workbooks.Close
+					.QUIT
+					USE IN c_cli
+					USE IN clidep
+					USE IN clictb
+					USE IN clitar
+					USE IN cli
+					IF USED("c_gru")
+						USE IN c_gru
+					ENDIF
+					IF !EMPTY(lcaliaspelexls) AND USED(lcaliaspelexls)
+						SELECT (lcaliaspelexls)
+					ENDIF
+					RETURN .F.
+				ENDIF
+				IF !CrearLectoresImportacionMasivaAutomatico(lcLogImportacion,@lnLectoresAgregados,@lnLectoresNoAgregados)
+					.DisplayAlerts = .F.
+					.Workbooks.Close
+					.QUIT
+					USE IN c_cli
+					USE IN clidep
+					USE IN clictb
+					USE IN clitar
+					USE IN cli
+					IF USED("c_gru")
+						USE IN c_gru
+					ENDIF
+					IF USED("c_age")
+						USE IN c_age
+					ENDIF
+					IF !EMPTY(lcaliaspelexls) AND USED(lcaliaspelexls)
+						SELECT (lcaliaspelexls)
+					ENDIF
+					RETURN .F.
+				ENDIF
 				UPDATE c_cli SET iddepto =a.id from clidep a inner join c_cli on a.cod=c_cli.coddepto AND a.origen="DEP"
 				UPDATE c_cli SET idmuni =a.id from clidep a inner join c_cli on a.cod=c_cli.codmuni AND a.origen="MUN"
 				**** sucursal
+				lnSucursalImportacion=0
+				IF TYPE("pnIdSucursal")="N"
+					lnSucursalImportacion=pnIdSucursal
+				ENDIF
+				IF lnSucursalImportacion>0
+					SELECT clidep
+					LOCATE FOR id=lnSucursalImportacion AND origen="SUC" AND status=1 AND !DELETED()
+					IF !FOUND()
+						lnSucursalImportacion=0
+					ENDIF
+				ENDIF
+				IF lnSucursalImportacion=0
+					SELECT clidep
+					LOCATE FOR origen="SUC" AND status=1 AND !DELETED()
+					IF FOUND()
+						lnSucursalImportacion=clidep.id
+					ENDIF
+				ENDIF
 				UPDATE c_cli SET idsucursal =a.id from clidep a inner join c_cli on a.cod=c_cli.codsuc AND a.origen="SUC"
-				REPLACE codsuc WITH 'M001' FOR idsucursal=0 IN c_cli
-				UPDATE c_cli SET idsucursal =a.id from clidep a inner join c_cli on a.cod=c_cli.codsuc AND a.origen="SUC"
+				REPLACE idsucursal WITH lnSucursalImportacion FOR idsucursal=0 IN c_cli
 				*****
-				UPDATE c_cli SET idgrupo =a.id from clidep a inner join c_cli on UPPER(a.nombre)=UPPER(c_cli.grupo) AND a.origen="GRU"
-				UPDATE c_cli SET idagente =a.id from clidep a inner join c_cli on UPPER(a.cod)=UPPER(c_cli.agente) AND a.origen="VEN"
+				UPDATE c_cli SET idgrupo =a.id from clidep a inner join c_cli on (UPPER(ALLTRIM(a.nombre))=UPPER(ALLTRIM(c_cli.grupo)) OR UPPER(ALLTRIM(a.cod))=UPPER(ALLTRIM(c_cli.grupo))) AND a.origen="GRU"
+				UPDATE c_cli SET idagente =a.id from clidep a inner join c_cli on (UPPER(ALLTRIM(a.cod))=UPPER(ALLTRIM(c_cli.agente)) OR UPPER(ALLTRIM(a.nombre))=UPPER(ALLTRIM(c_cli.agente))) AND a.origen="VEN"
+				SELECT c_cli
+				SCAN FOR idsucursal=0 OR idgrupo=0 OR idagente=0
+					lcMotivoCatalogo=IIF(idsucursal=0,"No hay una sucursal activa disponible. ","")+;
+						IIF(idgrupo=0,"Zona '"+ALLTRIM(grupo)+"' no disponible. ","")+;
+						IIF(idagente=0,"Lector '"+ALLTRIM(agente)+"' no disponible.","")
+					=RegistrarLogImportacionClientes(lcLogImportacion,"USUARIO",codclipro,"NO AGREGADO",lcMotivoCatalogo)
+					=RegistrarResultadoImportacionClientes(filaexcel,codclipro,"ERROR",lcMotivoCatalogo)
+					lnFilasNoAgregadas=lnFilasNoAgregadas+1
+					DELETE IN c_cli
+				ENDSCAN
 				UPDATE c_cli SET idtarifa =a.idtarifa from clitar a inner join c_cli on a.tarifa=c_cli.tarifa 
 				UPDATE C_CLI SET idctacontable=a.idCUENTA from clictb a inner join c_cli on a.CODCTA=c_cli.ctacontable
+				SELECT c_cli
+				SCAN FOR !EMPTY(ALLTRIM(ctacontable)) AND idctacontable=0
+					=RegistrarLogImportacionClientes(lcLogImportacion,"CUENTA CONTABLE",codclipro,"INFORMATIVO",;
+						"No se encontro '"+ALLTRIM(ctacontable)+"'; el usuario se cargara sin cuenta individual para permitir una cuenta comun.")
+				ENDSCAN
 			ENDIF 
 			SELECT c_cli
+			COUNT TO lnClientesPreparados
 			llSinTarifa=.f. 
 			lnMalosTarifa=0
 	  		
@@ -9063,6 +9804,10 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 							FROM c_cli GROUP BY codclipro,clipro) as cc WHERE cc.repetidas>1 INTO CURSOR c_repetidas
 			IF !EOF()
 				llRepetidas=.t.
+				SCAN
+					REPLACE estado WITH "ERROR",mensaje WITH "El codigo aparece repetido en el archivo." ;
+						FOR ALLTRIM(c_resultadoImportacionClientes.codigo)==ALLTRIM(c_repetidas.codclipro) IN c_resultadoImportacionClientes
+				ENDSCAN
 				WAIT WINDOW "Existen codigos Repetidos, favor Revisar el Archivo "+CHR(13)+"Ctrl+V para Pegar el Detalle de Registros Repetidos" 
 				_vfp.DataToClip(,,3)
 			ELSE 
@@ -9070,6 +9815,14 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 			ENDIF 
 			USE IN c_repetidas
 			
+			IF llSinTarifa
+				SELECT c_cli
+				SCAN FOR NVL(idtarifa,0)<1
+					=RegistrarResultadoImportacionClientes(filaexcel,codclipro,"ERROR",;
+						"No se encontro la tarifa '"+ALLTRIM(tarifa)+"'.")
+				ENDSCAN
+			ENDIF
+
 			IF !llRepetidas OR llSinTarifa=.f.
 				***** cargando
 *!*								idclipro,codclipro,clipro,direccion,SPACE(200) as departamento,SPACE(10) as ciudad,correo,;
@@ -9081,7 +9834,7 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 
 				SELECT 0000000000 as id,idclipro,codclipro,clipro,direccion,celular,correodte,ultimalectura,1,tipoclipro,tipocontri,idgrupo,tipoiva,idtarifa,;
 									ldfec,ldfec,pcnodo,pnidusuario,SYS(0),idsucursal,iddepto,idmuni,condipago,diascredito,limitecredito,fecultilectura, ;
-									dui,nit,nrc,giro,idagente,micromedidor,idctacontable,codpais,nacionalidad ;
+									dui,nit,nrc,giro,idagente,micromedidor,idctacontable,codpais,nacionalidad,filaexcel ;
 						FROM c_cli WHERE codclipro NOT in (select codclipro FROM cli where TIPOCLIPRO=IIF(lcMiOrigenCXCP="CLI",1,2) ) ;
 						INTO CURSOR c_cargar READWRITE 
 				llto=RECCOUNT()
@@ -9089,13 +9842,27 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 				GO top
 				FOR i=1 TO llto
 					WAIT WINDOW "Cargando "+ALLTRIM(STR(i))+" de "+ALLTRIM(STR(llto)) NOWAIT 
-					INSERT INTO cli (idclipro,codclipro,clipro,direccion,celular,correodte,ultimalectura,status,tipoclipro,tipocontri,idgrupo,tipoiva,idtarifa,;
+					SELECT c_cargar
+					LOCATE FOR id=i
+					lcCodigoCarga=IIF(FOUND(),ALLTRIM(codclipro),"")
+					INSERT INTO cli (idclipro,codclipro,clipro,nombre,direccion,gps,celular,correodte,ultimalectura,status,tipoclipro,tipocontri,idgrupo,tipoiva,porrenta,idtarifa,;
 										fecalta,fecmod,nodo,iduser,pcuser,idsucursal,iddepto,idmuni,condipago,diascredito,limitecredito,fecultilectura,;
-										dui,nit,nrc,giro,idagente,micromedidor,ctacliloc,codpais,nacionalidad) ;
-						SELECT idclipro,codclipro,clipro,direccion,celular,correodte,ultimalectura,1,tipoclipro,tipocontri,idgrupo,tipoiva,idtarifa,;
+										dui,nit,nrc,giro,idagente,micromedidor,ctacliloc,codpais,nacionalidad,variosnombres,sobregiro,idlista,pordescuento,saldo) ;
+						SELECT idclipro,codclipro,clipro,clipro,direccion,SPACE(1),celular,correodte,ultimalectura,1,tipoclipro,tipocontri,idgrupo,tipoiva,0,idtarifa,;
 										ldfec,ldfec,pcnodo,pnidusuario,SYS(0),idsucursal,iddepto,idmuni,condipago,diascredito,limitecredito,fecultilectura, ;
-										dui,nit,nrc,giro,idagente,micromedidor,idctacontable,codpais,nacionalidad ;
+										dui,nit,nrc,giro,idagente,micromedidor,idctacontable,codpais,nacionalidad,0,0,0,0,0 ;
 							FROM c_cargar WHERE codclipro NOT in (select codclipro FROM cli where TIPOCLIPRO=IIF(lcMiOrigenCXCP="CLI",1,2) ) AND id=i
+					lnCargadosIteracion=_TALLY
+					lnClientesAgregados=lnClientesAgregados+lnCargadosIteracion
+					IF lnCargadosIteracion>0
+						=RegistrarLogImportacionClientes(lcLogImportacion,"USUARIO",lcCodigoCarga,"CARGADO","OK")
+						=RegistrarResultadoImportacionClientes(c_cargar.filaexcel,lcCodigoCarga,"CARGADO","OK")
+					ELSE
+						=RegistrarLogImportacionClientes(lcLogImportacion,"USUARIO",lcCodigoCarga,"NO CARGADO",;
+							"El registro no se inserto; verifique si el codigo ya existe.")
+						=RegistrarResultadoImportacionClientes(c_cargar.filaexcel,lcCodigoCarga,"ERROR",;
+							"El registro no se inserto; verifique si el codigo ya existe.")
+					ENDIF
 				ENDFOR 
 				USE IN c_cargar
 				
@@ -9104,9 +9871,34 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 					lnregimp=RECCOUNT()
 				ENDIF 
 				WAIT CLEAR 
-				MESSAGEBOX('Se importaron '+ALLTRIM(STR(lnxlsLin-2-lnMalosTarifa))+' Registros....',64,'Mensaje...')
-		
 			ENDIF 
+			SELECT c_resultadoImportacionClientes
+			REPLACE estado WITH "ERROR",mensaje WITH "El registro no se cargo; verifique si el codigo ya existe o si cumple las validaciones." ;
+				FOR estado="PENDIENTE"
+			COUNT TO lnTotalResultado
+			COUNT FOR estado="CARGADO" TO lnSinErrorResultado
+			lnConErrorResultado=lnTotalResultado-lnSinErrorResultado
+			lnClientesNoAgregados=lnConErrorResultado
+			lcResumen="Usuarios/clientes agregados: "+ALLTRIM(STR(lnClientesAgregados))+CHR(13)+;
+				"Usuarios/clientes no agregados: "+ALLTRIM(STR(lnClientesNoAgregados))+CHR(13)+;
+				"Zonas agregadas: "+ALLTRIM(STR(lnZonasAgregadas))+CHR(13)+;
+				"Zonas no agregadas: "+ALLTRIM(STR(lnZonasNoAgregadas))+CHR(13)+;
+				"Lectores agregados: "+ALLTRIM(STR(lnLectoresAgregados))+CHR(13)+;
+				"Lectores no agregados: "+ALLTRIM(STR(lnLectoresNoAgregados))
+			=RegistrarLogImportacionClientes(lcLogImportacion,"RESUMEN","","FINALIZADO",STRTRAN(lcResumen,CHR(13),"; "))
+			lcArchivoResultado=GenerarExcelResultadoImportacionClientes(lcFileXls,"c_resultadoImportacionClientes",;
+				lnTotalResultado,lnSinErrorResultado,lnConErrorResultado)
+			IF !EMPTY(lcArchivoResultado) AND FILE(lcArchivoResultado)
+				MESSAGEBOX(lcResumen+CHR(13)+CHR(13)+"Resultado Excel: "+lcArchivoResultado,;
+					IIF(lnConErrorResultado+lnZonasNoAgregadas+lnLectoresNoAgregados>0,48,64),"Resultado de importacion")
+				DECLARE INTEGER ShellExecute IN shell32.dll ;
+					INTEGER hndWin,STRING cAction,STRING cFileName,STRING cParams,STRING cDir,INTEGER nShowWin
+				ShellExecute(0,"open",lcArchivoResultado,"",JUSTPATH(lcArchivoResultado),1)
+				RELEASE ShellExecute
+			ELSE
+				MESSAGEBOX(lcResumen+CHR(13)+CHR(13)+"No se pudo generar el resultado Excel. Log: "+lcLogImportacion,;
+					48,"Resultado de importacion")
+			ENDIF
 		ENDWITH
 		
 		USE IN c_cli
@@ -9114,7 +9906,12 @@ FUNCTION cargarArchivoExcelCliPRO(lcMiOrigenCXCP)
 		USE IN clictb
 		USE IN clitar
 		USE IN cli
-		USE IN C_GRU
+		IF USED("c_gru")
+			USE IN c_gru
+		ENDIF
+		IF USED("c_resultadoImportacionClientes")
+			USE IN c_resultadoImportacionClientes
+		ENDIF
 	
 	ENDIF 
 		
@@ -16142,7 +16939,7 @@ FUNCTION ApiPedidosJsonCliente
 		'"code":' + _JsonVentaTexto(c_ApiClientes.codclipro) + ;
 		',"displayName":' + _JsonVentaTexto(lcNombre) + ;
 		',"legalName":' + _JsonVentaTexto(lcLegal) + ;
-		',"address":' + _JsonVentaTexto(IIF(EMPTY(c_ApiClientes.direccion), "KM 9.5 CARRETERA DE ORO", c_ApiClientes.direccion)) + ;
+		',"address":' + _JsonVentaTexto(ALLTRIM(c_ApiClientes.direccion)) + ;
 		',"mobile":"7000-0000","email":"noenviar@gmail.com"' + ;
 		',"customerType":1,"branchId":' + TRANSFORM(pnIdSucursal) + ;
 		',"groupId":261,"departmentId":1106,"municipalityId":10518' + ;
