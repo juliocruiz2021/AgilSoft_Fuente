@@ -1,6 +1,7 @@
 # Estado operativo - ERP SIGA Visual FoxPro
 ## Acceso externo API/IA 2026-10-20
 - API y Dashboard relacionados incorporan `Administracion > Acceso externo`, tokens personales y OAuth por `/mcp/{tenant}`. Decision final: cada tenant usa un complemento independiente; el chat no lista ni cambia empresas. DCR, PKCE S256, codigos de un uso, access/refresh rotatorio, pantalla por tenant, revocacion y permiso IA 153 quedaron listos. El catalogo incluye consultas autorizadas de ventas, cierre, IVA, contabilidad, KPI y lotes, ademas de escrituras protegidas con borrador y `CONFIRMO`. API win-x86, pruebas, arranque local, Dashboard build/lint y handoff del instalador PASS. La siguiente sesion tiene alcance exclusivo de generar/verificar los dos ZIP y dos SHA, registrar sus datos y detenerse antes de instalar. Handoff: `D:\Desarrollo_.net\sigastack-deploy\context\NEXT_RELEASE_MCP_HANDOFF.md`. No se modifico VFP ni datos empresariales.
+- Para preguntas especiales de ventas sin endpoint dedicado, el catalogo MCP usa `sales.data_pbi` como respaldo general despues de preferir una operacion especializada; permite filtros, agrupaciones y calculos sobre el detalle relacionado, siempre respetando la visibilidad de costos y marcando los resultados derivados como analisis.
 ## Carga masiva de pedidos DIPRO - productos y pedidos separados 2026-10-19
 - `ImportarPedidosExcelApi()` detecta codigos de producto faltantes unicos, pide autorizacion y llama primero a `/api/pedidos/carga-masiva/crear-productos`; las demas cargas no fueron modificadas.
 - La API confirma cada producto DIPRO en una transaccion independiente. SIGA cierra sus cursores, relee el XLS y valida nuevamente contra la base antes de ofrecer la carga de pedidos; si quedan productos pendientes no envia pedidos.
@@ -114,7 +115,4 @@ Actualizado: 2026-10-20 (America/El_Salvador)
 - No modificar DBF, DBC, indices ni datos reales sin autorizacion explicita.
 - Rama visible: `main`; HEAD visible al inicio de esta continuidad: `3acc8e59`.
 ## Proyectos relacionados
-- API: `D:\Desarrollo_.net\apisigavfp\context\WORK_STATUS.md`.
-- Dashboard: `D:\Desarrollo_.net\dashboarsiga\context\WORK_STATUS.md`.
-- Flutter: `D:\Desarrollo_.net\appsigavfp\context\WORK_STATUS.md`.
-- Catalogo: `D:\Desarrollo_.net\catalogosiga\context\WORK_STATUS.md`.
+- Seguimiento: API `D:\Desarrollo_.net\apisigavfp\context\WORK_STATUS.md`; Dashboard `D:\Desarrollo_.net\dashboarsiga\context\WORK_STATUS.md`; Flutter `D:\Desarrollo_.net\appsigavfp\context\WORK_STATUS.md`; Catalogo `D:\Desarrollo_.net\catalogosiga\context\WORK_STATUS.md`.
