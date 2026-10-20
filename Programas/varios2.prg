@@ -17649,6 +17649,77 @@ PROCEDURE EliminarClaveLoginRecordadaActual
 ENDPROC
 
 
+FUNCTION ConfirmarCabeceraAnulacionVenta
+	LPARAMETERS tnIdDocto, tnMotivo
+	LOCAL lnAreaAnterior, llConfirmada, loError
+	lnAreaAnterior=SELECT()
+	llConfirmada=.F.
+	TRY
+		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaGeneral
+		SELECT cIncVentaGeneral
+		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
+		IF FOUND()
+			IF status=0
+				llConfirmada=.T.
+			ELSE
+				IF RLOCK()
+					REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
+					UNLOCK IN cIncVentaGeneral
+					FLUSH IN cIncVentaGeneral
+					llConfirmada=.T.
+				ENDIF
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		llConfirmada=.F.
+	FINALLY
+		IF USED("cIncVentaGeneral")
+			UNLOCK IN cIncVentaGeneral
+			USE IN cIncVentaGeneral
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+	RETURN llConfirmada
+ENDFUNC
+
+
+FUNCTION ConfirmarCabeceraEliminacionVenta
+	LPARAMETERS tnIdDocto
+	LOCAL lnAreaAnterior, llConfirmada, loError
+	lnAreaAnterior=SELECT()
+	llConfirmada=.F.
+	TRY
+		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaEliminar
+		SELECT cIncVentaEliminar
+		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA"
+		IF FOUND()
+			IF eliminado=1 AND status=0
+				llConfirmada=.T.
+			ELSE
+				IF RLOCK()
+					REPLACE status WITH 0, eliminado WITH 1, fecmod WITH DATETIME()
+					UNLOCK IN cIncVentaEliminar
+					FLUSH IN cIncVentaEliminar
+					llConfirmada=.T.
+				ENDIF
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		llConfirmada=.F.
+	FINALLY
+		IF USED("cIncVentaEliminar")
+			UNLOCK IN cIncVentaEliminar
+			USE IN cIncVentaEliminar
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+	RETURN llConfirmada
+ENDFUNC
+
 FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 	LPARAMETERS tnIdDocto, tnMotivo
 	LOCAL lnAreaAnterior, llAceptada, llConfirmada, loError
@@ -17800,7 +17871,7 @@ FUNCTION ValidarAnulacionVentaConsistente
 		USE (lcBase + "ctbpartidasdeta") SHARED AGAIN IN 0 ALIAS cAuditAnuParDet
 
 		SELECT cAuditAnuVenta
-		COUNT TO lnEncabezado FOR iddocto = tnIdDocto AND UPPER(ALLTRIM(origen)) == "VTA" AND status = 0 AND eliminado = 0
+		COUNT TO lnEncabezado FOR iddocto = tnIdDocto AND UPPER(ALLTRIM(origen)) == "VTA" AND status = 0
 		SELECT cAuditAnuDeta
 		COUNT TO lnDetalle FOR iddocto = tnIdDocto AND status <> 0 AND eliminado = 0
 		SELECT cAuditAnuKar
