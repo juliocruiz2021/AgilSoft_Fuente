@@ -8570,6 +8570,13 @@ FUNCTION _generaPartidaCompras(lnsqlid,lnidDoc,lnTipConec)
 			
 			ENDIF 
 		
+			* Una compra anulada nunca debe conservar importes contables, incluso si
+			* cambio la configuracion contable o quedaron lineas antiguas sin empatar.
+			IF TYPE("lnStatusPart") = "N" AND lnStatusPart = 0 AND USED("ctbpartidas") AND USED("ctbpartidasdeta")
+				UPDATE ctbpartidas SET monto=0,fecmod=ldfecmodpartida WHERE idpartida=lnidDoc AND UPPER(ALLTRIM(origen))="COM"
+				UPDATE ctbpartidasdeta SET debe=0,haber=0,fecmod=ldfecmodpartida WHERE idpartida=lnidDoc AND UPPER(ALLTRIM(origen))="COM"
+			ENDIF
+
 			USE IN c_PartTmp
  
 					
@@ -15638,11 +15645,14 @@ FUNCTION ValidarPartidasAnuladas()
 		USE pcSysDir+pcdb+"\cyvventas" IN 0  share AGAIN 
 		USE pcSysDir+pcdb+"\cyvcompras" IN 0  share AGAIN 
 		USE pcSysDir+pcdb+"\ctbpartidas" IN 0 SHARED AGAIN
+		USE pcSysDir+pcdb+"\ctbpartidasdeta" IN 0 SHARED AGAIN
 		SELECT cyvventas
 
-		SELECT a.iddocto FROM cyvventas a inner JOIN ctbpartidas b ON a.iddocto=b.idpartida ;
-				WHERE (a.status=0 OR a.anulado=1 OR a.eliminado=1) AND (NVL(b.monto,0)<>0 OR ISNULL(b.monto)) ;
-				INTO CURSOR c_sinanular READWRITE 
+		SELECT DISTINCT a.iddocto FROM cyvventas a LEFT JOIN ctbpartidas b ON a.iddocto=b.idpartida AND UPPER(ALLTRIM(b.origen))='VTA' AND b.eliminado=0 ;
+				LEFT JOIN ctbpartidasdeta d ON a.iddocto=d.idpartida AND UPPER(ALLTRIM(d.origen))='VTA' AND d.eliminado=0 ;
+				WHERE UPPER(ALLTRIM(a.origen))='VTA' AND a.eliminado=0 AND (a.status=0 OR a.anulado=1) AND ;
+				(NVL(b.monto,0)<>0 OR NVL(d.debe,0)<>0 OR NVL(d.haber,0)<>0) ;
+				INTO CURSOR c_sinanular READWRITE
 		lnsihay=_tally
 
 		****** venrtas
@@ -15661,7 +15671,6 @@ FUNCTION ValidarPartidasAnuladas()
 				lnii=lnii+1
 				lniddoctoconta=iddocto
 				WAIT WINDOW 'Validando Partidas Anuladas ... Ventas '+ALLTRIM(STR(lnii))+'/'+ALLTRIM(STR(lnsihay)) NOWAIT 
-				? lnIdSqlJR,lniddoctoconta,pnTipoconeccion
 				_generaPartidaventas(lnIdSqlJR,lniddoctoconta,pnTipoconeccion)
 			ENDSCAN 
 			=miSQLDISCONNECT(lnIdSqlJR)
@@ -15670,7 +15679,10 @@ FUNCTION ValidarPartidasAnuladas()
 		
 		******* compras
 		SELECT cyvcompras
-		SELECT a.iddocto FROM cyvcompras a LEFT JOIN ctbpartidas b ON a.iddocto=b.idpartida WHERE (a.status=0 OR a.anulado=1 OR a.eliminado=1) AND (NVL(b.monto,0)<>0 OR ISNULL(b.monto)) INTO CURSOR c_sinanular READWRITE 
+		SELECT DISTINCT a.iddocto FROM cyvcompras a LEFT JOIN ctbpartidas b ON a.iddocto=b.idpartida AND UPPER(ALLTRIM(b.origen))='COM' AND b.eliminado=0 ;
+			LEFT JOIN ctbpartidasdeta d ON a.iddocto=d.idpartida AND UPPER(ALLTRIM(d.origen))='COM' AND d.eliminado=0 ;
+			WHERE UPPER(ALLTRIM(a.origen))='COM' AND a.eliminado=0 AND (a.status=0 OR a.anulado=1) AND ;
+			(NVL(b.monto,0)<>0 OR NVL(d.debe,0)<>0 OR NVL(d.haber,0)<>0) INTO CURSOR c_sinanular READWRITE
 		lnsihay=_tally
 
 		IF USED('cyvcompras')
@@ -15692,6 +15704,9 @@ FUNCTION ValidarPartidasAnuladas()
 		IF USED("ctbpartidas")
 			USE IN ctbpartidas 
 		ENDIF 
+		IF USED("ctbpartidasdeta")
+			USE IN ctbpartidasdeta
+		ENDIF
 		
 		IF !EMPTY(lcaliasvalida)
 			IF USED(lcaliasvalida)
@@ -43980,7 +43995,9 @@ FUNCTION EnviarJsonGestionInterna
 	ADDPROPERTY(loResultado, "respuesta", "")
 	ADDPROPERTY(loResultado, "jsonEnviado", "")
 
-	lcUrl = "https://nqrvllxqhfpskpkknztz.supabase.co/functions/v1/recibir-factura"
+	* Todo evento pasa primero por la cola durable SQLite de SigaBridge.Api.
+	* La API conserva el JSON exacto de alta/anulacion y lo reintenta si falla.
+	lcUrl = ApiPedidosUrlBase() + "/api/integrations/gestion-interna/facturas"
 	lcLlave = ""
 	llPrueba = .F.
 
@@ -44028,6 +44045,7 @@ FUNCTION EnviarJsonGestionInterna
 		loHttp.setTimeouts(10000, 10000, 15000, 15000)
 		loHttp.Open("POST", lcUrl, .F.)
 		loHttp.setRequestHeader("Content-Type", "application/json; charset=utf-8")
+		loHttp.setRequestHeader("X-Siga-Tenant", "impmarrq")
 		loHttp.setRequestHeader("x-llave-siga", lcLlave)
 		loHttp.Send(luCuerpo)
 
@@ -44083,7 +44101,7 @@ FUNCTION GenerarJsonDocumentoUniversal
 		USE (pcSysDir + pcdb + "\cyvCliPro") IN 0 SHARED AGAIN ALIAS c_JV_Cliente
 		USE (pcSysDir + pcdb + "\sisCata") IN 0 SHARED AGAIN ALIAS c_JV_Sucursal
 
-		SELECT a.iddocto, a.origen, a.numero, a.fechadocto, a.totaldocto, ;
+		SELECT a.iddocto, a.origen, a.numero, a.fechadocto, a.totaldocto, a.status AS statusDocumento, ;
 			a.clipro AS nombreCliente, a.celular AS celularDocumento, a.dui, a.nit, a.nrc, ;
 			NVL(t.clave, "") AS tipoDocumento, ;
 			NVL(c.celular, "") AS celularCliente, ;
@@ -44161,6 +44179,7 @@ FUNCTION GenerarJsonDocumentoUniversal
 			'"sucursal":' + _JsonVentaTexto(c_JV_Encabezado.nombreSucursal) + "," + ;
 			'"monto_factura":' + _JsonVentaNumero(c_JV_Encabezado.totaldocto, 2) + "," + ;
 			'"items":' + lcItems + "," + ;
+			'"anulado":' + IIF(NVL(c_JV_Encabezado.statusDocumento, 0) = 0, "true", "false") + "," + ;
 			'"prueba":' + IIF(llPrueba, "true", "false") + ;
 		"}"
 
@@ -44442,8 +44461,9 @@ FUNCTION ProcesarPendientesGestionInterna
 
 		SELECT iddocto, fechadocto ;
 			FROM cPendStatusApiIM ;
-			WHERE statusApiIM = 0 AND eliminado = 0 AND idsucursal = m.pnIdSucursal AND ;
-				NVL(fechadocto, {}) >= DATE(2026, 10, 7) ;
+			WHERE statusApiIM = 0 AND eliminado = 0 AND UPPER(ALLTRIM(origen)) = "VTA" AND ;
+				idsucursal = m.pnIdSucursal AND ;
+				NVL(fechadocto, {}) >= DATE(2026, 10, 19) ;
 			ORDER BY fechadocto, iddocto ;
 			INTO CURSOR cPendApiIM READWRITE
 		USE IN cPendStatusApiIM
@@ -44519,7 +44539,7 @@ FUNCTION DebeSincronizarVentaIM
 		SELECT cDebeSyncApiIM
 		LOCATE FOR iddocto = m.tnIdDocto
 		IF FOUND()
-			llSincroniza = NVL(fechadocto, {}) >= DATE(2026, 10, 7) AND ;
+			llSincroniza = NVL(fechadocto, {}) >= DATE(2026, 10, 19) AND ;
 				NVL(idsucursal, 0) = m.pnIdSucursal
 		ENDIF
 	CATCH TO loError

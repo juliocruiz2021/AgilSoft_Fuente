@@ -16137,7 +16137,19 @@ FUNCTION InvalidadDTE_VTA_Sub(lnidDocAnulaDTE,lcOriAnulaDTE,lcmotivoanulaDTEE,lc
 			lcruta=ALLTRIM(pcUrlProdInvalidDTE)
 		ENDIF 
 		
-		IF (!EMPTY(lcruta) AND statusDTE=1 AND !EMPTY(sellorecepcion))	OR c_MiDocDTE.idtipodocto=pnidtiponulfac	&&&  si esta presentada en hacienda con sello
+		* Una reversion solo consulta Hacienda si el documento original tiene sello.
+		* Sin sello, ambos procesos se resuelven exclusivamente dentro de SIGA.
+		llReversionConSello=.F.
+		IF c_MiDocDTE.idtipodocto=pnidtiponulfac
+			lnIdDoctoOriginalSello=c_MiDocDTE.iddoctorelacion
+			SELECT c_DTE
+			LOCATE FOR iddocto=lnIdDoctoOriginalSello AND UPPER(ALLTRIM(origen))==UPPER(ALLTRIM(lcOriAnulaDTE)) AND status=1 AND !EMPTY(sellorecepcion)
+			llReversionConSello=FOUND()
+			SELECT c_MiDocDTE
+		ENDIF
+
+		IF (!EMPTY(lcruta) AND !EMPTY(sellorecepcion)) OR ;
+			(c_MiDocDTE.idtipodocto=pnidtiponulfac AND llReversionConSello)	&&& documento actual u original con sello
 			IF idtipodocto=pnidtiponulfac			&&&& se esta anulando una factura con una reversion en otra fecha
 				lnidDocAnular=idDoctoRelacion
 				SELECT a.iddocto,a.motivoanula,a.codigogeneracion,a.notas,;
@@ -16280,7 +16292,16 @@ m.DTE_Json_EnvioInVal=docJson
 m.DTE_Json_EnvioInVal_Res=lcResultText
 			obRes =json2SR.Parse(lcResultText)
 *_cliptext=	lcResultText		
-			IF obRes.ok=.t. OR 'El documento ya se encuentra anulado'$lcResultText
+			lcResultUpper=UPPER(ALLTRIM(lcResultText))
+			llInvalidacionConfirmada=obRes.ok=.t. OR ;
+				'DOCUMENTO SE ENCUENTRA INVALIDADO'$lcResultUpper OR ;
+				'DOCUMENTO YA SE ENCUENTRA INVALIDADO'$lcResultUpper OR ;
+				'YA FUE INVALIDADO'$lcResultUpper OR ;
+				'YA ESTA INVALIDADO'$lcResultUpper OR ;
+				'DOCUMENTO INVALIDADO'$lcResultUpper OR ;
+				'DTE INVALIDADO'$lcResultUpper OR ;
+				'EL DOCUMENTO YA SE ENCUENTRA ANULADO'$lcResultUpper
+			IF llInvalidacionConfirmada
 				loRetRespu.Status='ok'
 				loRetRespu.Mensaje=ALLTRIM(NVL(obRes.mensaje,''))
 				***** status 2 anulado
@@ -16299,17 +16320,12 @@ m.DTE_Json_EnvioInVal_Res=lcResultText
 			loRetRespu.comentario=lcResultText+CHR(13)+CHR(13)+docJson
 			RELEASE json2SR
 		ELSE
-			IF statusDTE=1 AND EMPTY(sellorecepcion)
-				loRetRespu.Mensaje='DTE presentado en MH, pero en Contingencia... '
-				loRetRespu.comentario='Documento en Contingencia, falta sello de recibido para poder anularlo...'
+			IF EMPTY(sellorecepcion)
+				loRetRespu.Status='ok'
+				loRetRespu.Mensaje='Documento local sin sello de Hacienda'
+				loRetRespu.comentario='Documento sin sello de recibido; no necesita validar con Hacienda y puede anularse localmente.'
 			ELSE 
-				IF statusDTE<>1
-					loRetRespu.Status='ok'
-					loRetRespu.Mensaje='Documento local no presentado en MH'
-					loRetRespu.comentario='Documento local, no neesita validar con Hacienda... Puede anularlo....'
-				ELSE 
-					loRetRespu.Mensaje='Configure en los Parametros la URL de consulta de DTE'	
-				ENDIF 
+				loRetRespu.Mensaje='Configure en los Parametros la URL de consulta de DTE'
 			ENDIF 
 		ENDIF 
 		*USE IN selloDTE
@@ -16374,7 +16390,7 @@ FUNCTION InvalidadDTE_COM_Sub(lnidDocAnulaDTE,lcOriAnulaDTE)
 			lcruta=ALLTRIM(pcUrlProdInvalidDTE)
 		ENDIF 
 		
-		IF !EMPTY(lcruta) AND statusDTE=1 AND !EMPTY(sellorecepcion)		&&&  si esta presentada en hacienda con sello
+		IF !EMPTY(lcruta) AND !EMPTY(sellorecepcion)		&&&  si tiene sello de Hacienda
 			
 			m.codEstable='"establecimiento": "'+ALLTRIM(codsuc)+'"'
 			m.uuid='"uuid": "'+lcuuid+'" '
@@ -16487,17 +16503,12 @@ m.DTE_Json_EnvioInVal_Res=lcResultText
 
 			RELEASE json2SR
 		ELSE
-			IF statusDTE=1 AND EMPTY(sellorecepcion)
-				loRetRespu.Mensaje='DTE presentado en MH, pero en Contingencia... '
-				loRetRespu.comentario='Documento en Contingencia, falta sello de recibido para poder anularlo...'
+			IF EMPTY(sellorecepcion)
+				loRetRespu.Status='ok'
+				loRetRespu.Mensaje='Documento local sin sello de Hacienda'
+				loRetRespu.comentario='Documento sin sello de recibido; no necesita validar con Hacienda y puede anularse localmente.'
 			ELSE 
-				IF statusDTE<>1
-					loRetRespu.Status='ok'
-					loRetRespu.Mensaje='Documento local no presentado en MH'
-					loRetRespu.comentario='Documento local, no neesita validar con Hacienda... Puede anularlo....'
-				ELSE 
-					loRetRespu.Mensaje='Configure en los Parametros la URL de consulta de DTE'	
-				ENDIF 
+				loRetRespu.Mensaje='Configure en los Parametros la URL de consulta de DTE'
 			ENDIF 
 		ENDIF 
 		*USE IN selloDTE
@@ -16518,7 +16529,7 @@ ENDFUNC
 FUNCTION ImportarPedidosExcelApi
 	LPARAMETERS tcArchivo, toFormulario
 	LOCAL lcArchivo, lcClave, lcUsuario, lcUrl, lcToken, lcResultado
-	LOCAL lnLineas, lnPedidos, lnClientesNuevos, lnInvalidos, lnCargados, lnFallidos
+	LOCAL lnLineas, lnPedidos, lnClientesNuevos, lnProductosNuevos, lnInvalidos, lnCargados, lnFallidos
 	LOCAL llContinuar, llAutorizado, llTermino, loError, lnArea
 
 	lcArchivo = FULLPATH(ALLTRIM(NVL(tcArchivo, "")))
@@ -16561,68 +16572,109 @@ FUNCTION ImportarPedidosExcelApi
 			ERROR "No se encontraron lineas DIPRO validas en el archivo."
 		ENDIF
 		ApiPedidosValidarLineas()
-		ApiPedidosPrepararClientes()
-		ApiPedidosPrepararEncabezados()
+		SELECT c_ApiProductosNuevos
+		COUNT TO lnProductosNuevos
+		llContinuar = .T.
+		IF lnProductosNuevos > 0
+			ApiPedidosActualizarEstado(toFormulario, 15, "Productos nuevos detectados.", ;
+				TRANSFORM(lnProductosNuevos) + " productos nuevos requieren autorizacion antes de cargar pedidos.")
+			llContinuar = MESSAGEBOX("Productos nuevos: " + TRANSFORM(lnProductosNuevos) + CHR(13) + CHR(13) + ;
+				"Autoriza crearlos en SIGA antes de cargar los pedidos?" + CHR(13) + ;
+				"Los productos se confirmaran primero en transacciones independientes.", ;
+				4 + 32 + 256, "Autorizar productos nuevos") = 6
+			IF llContinuar
+				ApiPedidosActualizarEstado(toFormulario, 17, "Autenticando para crear productos nuevos...", "")
+				lcToken = ApiPedidosAutenticar(lcUrl, lcUsuario, lcClave)
+				IF EMPTY(lcToken)
+					ERROR "No fue posible autenticar el usuario en la API. Revise la clave y que la API este iniciada."
+				ENDIF
+				ApiPedidosCrearProductosDipro(lcUrl, lcToken, lcArchivo, toFormulario)
 
-		SELECT c_ApiLineas
-		COUNT TO lnLineas
-		SELECT c_ApiPedidos
-		COUNT TO lnPedidos
-		COUNT FOR !valido TO lnInvalidos
-		SELECT c_ApiClientes
-		COUNT FOR nuevo AND valido TO lnClientesNuevos
-
-		ApiPedidosActualizarEstado(toFormulario, 20, "Validacion terminada.", ;
-			TRANSFORM(lnLineas) + " lineas, " + TRANSFORM(lnPedidos) + " pedidos, " + ;
-			TRANSFORM(lnClientesNuevos) + " clientes nuevos, " + TRANSFORM(lnInvalidos) + " pedidos con problemas.")
-
-		llContinuar = MESSAGEBOX("Archivo validado:" + CHR(13) + ;
-			"Pedidos: " + TRANSFORM(lnPedidos) + CHR(13) + ;
-			"Lineas: " + TRANSFORM(lnLineas) + CHR(13) + ;
-			"Clientes nuevos: " + TRANSFORM(lnClientesNuevos) + CHR(13) + ;
-			"Pedidos con problemas: " + TRANSFORM(lnInvalidos) + CHR(13) + CHR(13) + ;
-			"Desea iniciar la carga por API?", 4 + 32 + 256, "Confirmar carga masiva") = 6
+				* Los productos ya quedaron confirmados. Reconstruir la validacion
+				* completa antes de mostrar o enviar cualquier pedido.
+				ApiPedidosCerrarCursores()
+				ApiPedidosCrearCursores()
+				IF !ApiPedidosLeerExcel(lcArchivo)
+					ERROR "No se pudo releer el archivo despues de crear los productos."
+				ENDIF
+				ApiPedidosValidarLineas()
+				SELECT c_ApiProductosNuevos
+				COUNT TO lnProductosNuevos
+				IF lnProductosNuevos > 0
+					ERROR "Quedaron productos nuevos sin confirmar. Vuelva a ejecutar la carga para revisar el resultado."
+				ENDIF
+			ELSE
+				ApiPedidosActualizarEstado(toFormulario, 0, "Carga cancelada por el usuario.", ;
+					"No se crearon productos ni se enviaron pedidos.")
+			ENDIF
+		ENDIF
 
 		IF llContinuar
-			ApiPedidosActualizarEstado(toFormulario, 25, "Autenticando el usuario en la API...", "")
-			lcToken = ApiPedidosAutenticar(lcUrl, lcUsuario, lcClave)
-			IF EMPTY(lcToken)
-				ERROR "No fue posible autenticar el usuario en la API. Revise la clave y que la API este iniciada."
-			ENDIF
+			ApiPedidosPrepararClientes()
+			ApiPedidosPrepararEncabezados()
 
-			IF lnClientesNuevos > 0
-				ApiPedidosEnviarClientes(lcUrl, lcToken, toFormulario)
-			ENDIF
-			ApiPedidosAsignarClientes()
-			ApiPedidosEnviarOrdenes(lcUrl, lcToken, toFormulario)
-			ApiPedidosAgregarInvalidosAlResumen()
-			lcResultado = ApiPedidosExportarResumen(lcArchivo)
+			SELECT c_ApiLineas
+			COUNT TO lnLineas
+			SELECT c_ApiPedidos
+			COUNT TO lnPedidos
+			COUNT FOR !valido TO lnInvalidos
+			SELECT c_ApiClientes
+			COUNT FOR nuevo AND valido TO lnClientesNuevos
 
-			SELECT c_ApiResumen
-			COUNT FOR tipo = "PEDIDO" AND estado = "CARGADO" TO lnCargados
-			COUNT FOR tipo = "PEDIDO" AND estado <> "CARGADO" TO lnFallidos
-			ApiPedidosActualizarEstado(toFormulario, 100, "Proceso finalizado.", ;
-				"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
-				"Pedidos no cargados: " + TRANSFORM(lnFallidos) + CHR(13) + ;
-				"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
-				"Archivo: " + JUSTFNAME(lcResultado))
-			toFormulario.cArchivoResultado = lcResultado
-			IF lnFallidos > 0
-				MESSAGEBOX("Carga finalizada con observaciones." + CHR(13) + ;
-					"Cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
-					"No cargados: " + TRANSFORM(lnFallidos) + CHR(13) + CHR(13) + ;
+			ApiPedidosActualizarEstado(toFormulario, 20, "Validacion terminada.", ;
+				TRANSFORM(lnLineas) + " lineas, " + TRANSFORM(lnPedidos) + " pedidos, " + ;
+				TRANSFORM(lnClientesNuevos) + " clientes nuevos, " + TRANSFORM(lnInvalidos) + " pedidos con problemas.")
+
+			llContinuar = MESSAGEBOX("Archivo validado:" + CHR(13) + ;
+				"Pedidos: " + TRANSFORM(lnPedidos) + CHR(13) + ;
+				"Lineas: " + TRANSFORM(lnLineas) + CHR(13) + ;
+				"Clientes nuevos: " + TRANSFORM(lnClientesNuevos) + CHR(13) + ;
+				"Pedidos con problemas: " + TRANSFORM(lnInvalidos) + CHR(13) + CHR(13) + ;
+				"Desea iniciar la carga por API?", 4 + 32 + 256, "Confirmar carga masiva") = 6
+
+			IF llContinuar
+				ApiPedidosActualizarEstado(toFormulario, 25, "Autenticando el usuario en la API...", "")
+				IF EMPTY(lcToken)
+					lcToken = ApiPedidosAutenticar(lcUrl, lcUsuario, lcClave)
+				ENDIF
+				IF EMPTY(lcToken)
+					ERROR "No fue posible autenticar el usuario en la API. Revise la clave y que la API este iniciada."
+				ENDIF
+
+				IF lnClientesNuevos > 0
+					ApiPedidosEnviarClientes(lcUrl, lcToken, toFormulario)
+				ENDIF
+				ApiPedidosAsignarClientes()
+				ApiPedidosEnviarOrdenes(lcUrl, lcToken, toFormulario)
+				ApiPedidosAgregarInvalidosAlResumen()
+				lcResultado = ApiPedidosExportarResumen(lcArchivo)
+
+				SELECT c_ApiResumen
+				COUNT FOR tipo = "PEDIDO" AND estado = "CARGADO" TO lnCargados
+				COUNT FOR tipo = "PEDIDO" AND estado <> "CARGADO" TO lnFallidos
+				ApiPedidosActualizarEstado(toFormulario, 100, "Proceso finalizado.", ;
+					"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
+					"Pedidos no cargados: " + TRANSFORM(lnFallidos) + CHR(13) + ;
 					"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
-					"Archivo: " + JUSTFNAME(lcResultado), 48, "Carga masiva de pedidos")
-				ApiPedidosAbrirArchivo(lcResultado)
+					"Archivo: " + JUSTFNAME(lcResultado))
+				toFormulario.cArchivoResultado = lcResultado
+				IF lnFallidos > 0
+					MESSAGEBOX("Carga finalizada con observaciones." + CHR(13) + ;
+						"Cargados: " + TRANSFORM(lnCargados) + CHR(13) + ;
+						"No cargados: " + TRANSFORM(lnFallidos) + CHR(13) + CHR(13) + ;
+						"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
+						"Archivo: " + JUSTFNAME(lcResultado), 48, "Carga masiva de pedidos")
+					ApiPedidosAbrirArchivo(lcResultado)
+				ELSE
+					MESSAGEBOX("Carga completada correctamente." + CHR(13) + ;
+						"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + CHR(13) + ;
+						"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
+						"Archivo: " + JUSTFNAME(lcResultado), 64, "Carga masiva de pedidos")
+				ENDIF
+				llTermino = .T.
 			ELSE
-				MESSAGEBOX("Carga completada correctamente." + CHR(13) + ;
-					"Pedidos cargados: " + TRANSFORM(lnCargados) + CHR(13) + CHR(13) + ;
-					"Ruta: " + ADDBS(JUSTPATH(lcResultado)) + CHR(13) + ;
-					"Archivo: " + JUSTFNAME(lcResultado), 64, "Carga masiva de pedidos")
+				ApiPedidosActualizarEstado(toFormulario, 0, "Carga cancelada por el usuario.", "No se envio ningun pedido.")
 			ENDIF
-			llTermino = .T.
-		ELSE
-			ApiPedidosActualizarEstado(toFormulario, 0, "Carga cancelada por el usuario.", "No se envio ningun dato.")
 		ENDIF
 	CATCH TO loError
 		ApiPedidosActualizarEstado(toFormulario, 0, "La carga no pudo completarse.", loError.Message)
@@ -16673,6 +16725,9 @@ PROCEDURE ApiPedidosCrearCursores
 		lineas I, total N(18,6), valido L, error C(254), uid C(60), enviado L)
 	CREATE CURSOR c_ApiResumen (tipo C(12), numero C(20), codigo C(20), nombre C(120), fecha D, lineas I, ;
 		total N(18,6), estado C(20), idservidor I, referencia C(30), mensaje C(254))
+	CREATE CURSOR c_ApiProductosNuevos (codprod C(20), producto C(200), unimed C(20), precio N(18,6), iva N(12,4))
+	SELECT c_ApiProductosNuevos
+	INDEX ON UPPER(ALLTRIM(codprod)) TAG codprod
 ENDPROC
 
 
@@ -16732,6 +16787,11 @@ PROCEDURE ApiPedidosValidarLineas
 			lnIdProducto = c_ApiProductos.idproducto
 		ELSE
 			lcError = ApiPedidosUnirError(lcError, "Producto no existe: " + lcCodProd)
+			SELECT c_ApiProductosNuevos
+			IF !EMPTY(lcCodProd) AND !SEEK(UPPER(lcCodProd), "c_ApiProductosNuevos", "codprod")
+				INSERT INTO c_ApiProductosNuevos VALUES (lcCodProd, LEFT(ALLTRIM(c_ApiXls.producto), 200), ;
+					LEFT(ALLTRIM(c_ApiXls.unimed), 20), lnPrecio, c_ApiXls.iva)
+			ENDIF
 		ENDIF
 		lcVendedor = ALLTRIM(c_ApiXls.vendedor)
 		lnPos = AT("-", lcVendedor)
@@ -16767,6 +16827,109 @@ PROCEDURE ApiPedidosValidarLineas
 	SELECT c_ApiLineas
 	INDEX ON numero TAG numero
 ENDPROC
+
+
+PROCEDURE ApiPedidosCrearProductosDipro
+	LPARAMETERS tcUrl, tcToken, tcArchivo, toFormulario
+	LOCAL lcJson, loHttp, loJson, loDatos, lnSolicitados, lnCreados, lnExistentes, lnFallidos, loError
+
+	ApiPedidosActualizarEstado(toFormulario, 18, "Creando productos nuevos...", ;
+		"Esta etapa confirma cada producto por separado antes de cargar los pedidos.")
+	lcJson = ApiPedidosJsonCrearProductosDipro(tcArchivo)
+	loHttp = ApiPedidosHttp(tcUrl + "/api/pedidos/carga-masiva/crear-productos", lcJson, tcToken, "DIPRO")
+	IF loHttp.status = 0
+		ERROR "La conexion con la API se interrumpio mientras creaba los productos. Vuelva a ejecutar la carga; la API reconocera los productos ya confirmados. Detalle: " + loHttp.texto
+	ENDIF
+	IF loHttp.status < 200 OR loHttp.status >= 300
+		ERROR ApiPedidosMensajeRespuesta(loHttp.texto, "No fue posible crear los productos nuevos")
+	ENDIF
+
+	TRY
+		loJson = json_decode(loHttp.texto)
+		loDatos = loJson.get("data")
+		lnSolicitados = VAL(TRANSFORM(NVL(loDatos.get("requestedProducts"), 0)))
+		lnCreados = VAL(TRANSFORM(NVL(loDatos.get("createdProducts"), 0)))
+		lnExistentes = VAL(TRANSFORM(NVL(loDatos.get("existingProducts"), 0)))
+		lnFallidos = VAL(TRANSFORM(NVL(loDatos.get("failedProducts"), 0)))
+	CATCH TO loError
+		ERROR "La API creo los productos, pero SIGA no pudo interpretar el resultado: " + loError.Message
+	ENDTRY
+
+	ApiPedidosActualizarEstado(toFormulario, 20, "Etapa de productos finalizada.", ;
+		TRANSFORM(lnCreados) + " creados, " + TRANSFORM(lnExistentes) + " ya existentes y " + ;
+		TRANSFORM(lnFallidos) + " con error.")
+	IF lnFallidos > 0 OR lnCreados + lnExistentes < lnSolicitados
+		ERROR "No se confirmaron todos los productos nuevos. Vuelva a ejecutar la carga para revisar solamente los pendientes."
+	ENDIF
+ENDPROC
+
+
+FUNCTION ApiPedidosJsonCrearProductosDipro
+	LPARAMETERS tcArchivo
+	LOCAL lcFilas, lcCodigos, lcComaFila, lcComaCodigo, lcCodigo
+	lcFilas = "["
+	lcCodigos = "["
+	lcComaFila = ""
+	lcComaCodigo = ""
+
+	SELECT c_ApiProductosNuevos
+	SCAN
+		lcCodigo = ALLTRIM(c_ApiProductosNuevos.codprod)
+		lcCodigos = lcCodigos + lcComaCodigo + _JsonVentaTexto(lcCodigo)
+		lcComaCodigo = ","
+	ENDSCAN
+	SELECT c_ApiXls
+	SCAN
+		lcCodigo = UPPER(ALLTRIM(c_ApiXls.codprod))
+		IF !EMPTY(lcCodigo) AND SEEK(lcCodigo, "c_ApiProductosNuevos", "codprod")
+			lcFilas = lcFilas + lcComaFila + ApiPedidosJsonFilaExcelDipro()
+			lcComaFila = ","
+		ENDIF
+	ENDSCAN
+
+	RETURN '{"branchId":' + TRANSFORM(pnIdSucursal) + ;
+		',"defaultSellerId":0,"fileName":' + _JsonVentaTexto(JUSTFNAME(tcArchivo)) + ;
+		',"formatId":"DIPRO","rows":' + lcFilas + '],"authorizedCustomerCodes":[]' + ;
+		',"authorizedProductCodes":' + lcCodigos + "]}"
+ENDFUNC
+
+
+FUNCTION ApiPedidosJsonFilaExcelDipro
+	LOCAL lcJson
+	lcJson = "[" + _JsonVentaTexto(ALLTRIM(c_ApiXls.dipro)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.fecha)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.numero)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.codclipro)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.clipro)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.nombrecli)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bblank1)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.direccion)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bblank2)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bblank3)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bblank4)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bblank5)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.codprod)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.producto)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.unimed)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.cantidadtexto)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(TRANSFORM(c_ApiXls.cantddd))) + ;
+		"," + _JsonVentaTexto(ALLTRIM(TRANSFORM(c_ApiXls.cannet))) + ;
+		"," + _JsonVentaTexto(ALLTRIM(TRANSFORM(c_ApiXls.iva))) + ;
+		"," + _JsonVentaTexto(ALLTRIM(TRANSFORM(c_ApiXls.precno))) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.preciotexto)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(TRANSFORM(c_ApiXls.premalo))) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla1)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla2)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla3)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla4)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla5)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla6)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.bbbla7)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.vendedor)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.nada)) + ;
+		"," + _JsonVentaTexto(ALLTRIM(c_ApiXls.notaaf)) + "]"
+	RETURN lcJson
+ENDFUNC
 
 
 PROCEDURE ApiPedidosPrepararClientes
@@ -16955,18 +17118,24 @@ PROCEDURE ApiPedidosEnviarOrdenes
 	COUNT FOR valido AND !enviado TO lnTotal
 	lnHechos = 0
 	DO WHILE lnHechos < lnTotal
-		lcJson = ApiPedidosJsonLoteOrdenes(25, @lnCantidad)
+		* Cada pedido viaja en una solicitud corta. Crear 25 pedidos reales en una
+		* sola peticion puede superar el tiempo del proxy/VPS y MSXML informa que
+		* el servidor finalizo la conexion aunque la API siga procesando el lote.
+		lcJson = ApiPedidosJsonLoteOrdenes(1, @lnCantidad)
 		IF lnCantidad <= 0
 			EXIT
 		ENDIF
 		loHttp = ApiPedidosHttp(tcUrl + "/api/sync/push", lcJson, tcToken, "DIPRO")
+		IF loHttp.status = 0
+			ERROR "La conexion con la API se interrumpio mientras procesaba el pedido. Espere un minuto y vuelva a ejecutar la carga; SIGA reconocera los pedidos ya recibidos. Detalle: " + loHttp.texto
+		ENDIF
 		IF loHttp.status < 200 OR loHttp.status >= 300
 			ERROR ApiPedidosMensajeRespuesta(loHttp.texto, "Fallo el envio de pedidos")
 		ENDIF
 		ApiPedidosProcesarRespuesta(loHttp.texto, "ORDER")
 		lnHechos = lnHechos + lnCantidad
 		ApiPedidosActualizarEstado(toFormulario, 40 + INT(55 * lnHechos / MAX(1, lnTotal)), ;
-			"Cargando pedidos por lotes...", TRANSFORM(lnHechos) + " de " + TRANSFORM(lnTotal))
+			"Cargando pedidos uno por uno...", TRANSFORM(lnHechos) + " de " + TRANSFORM(lnTotal))
 	ENDDO
 ENDPROC
 
@@ -17478,3 +17647,325 @@ PROCEDURE EliminarClaveLoginRecordadaActual
 		SELECT (lnAreaAnterior)
 	ENDIF
 ENDPROC
+
+
+FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
+	LPARAMETERS tnIdDocto, tnMotivo
+	LOCAL lnAreaAnterior, llAceptada, llConfirmada, loError
+	lnAreaAnterior = SELECT()
+	llAceptada = .F.
+	llConfirmada = .F.
+	TRY
+		USE (pcSysDir+pcDB+"\sisDTE") SHARED AGAIN IN 0 ALIAS cIncFiscalDte
+		SELECT cIncFiscalDte
+		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND status=2
+		llAceptada = FOUND()
+		USE IN cIncFiscalDte
+		IF llAceptada
+			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncFiscalVenta
+			SELECT cIncFiscalVenta
+			LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
+			IF FOUND()
+				IF status=0
+					llConfirmada=.T.
+				ELSE
+					IF RLOCK()
+						REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
+						UNLOCK IN cIncFiscalVenta
+						FLUSH IN cIncFiscalVenta
+						llConfirmada=.T.
+					ENDIF
+				ENDIF
+			ENDIF
+			USE IN cIncFiscalVenta
+		ENDIF
+	CATCH TO loError
+		llConfirmada=.F.
+	FINALLY
+		IF USED("cIncFiscalDte")
+			USE IN cIncFiscalDte
+		ENDIF
+		IF USED("cIncFiscalVenta")
+			UNLOCK IN cIncFiscalVenta
+			USE IN cIncFiscalVenta
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+	RETURN llConfirmada
+ENDFUNC
+
+
+FUNCTION RegistrarInconsistenciaAnulacionVenta
+	LPARAMETERS tnIdDocto, tcEtapa, tcCodigo, tcMensaje
+	LOCAL lnAreaAnterior, lnIntento, llGuardada, loError
+	lnAreaAnterior=SELECT()
+	lnIntento=1
+	llGuardada=.F.
+	TRY
+		USE (pcSysDir+pcDB+"\sisDTE") SHARED AGAIN IN 0 ALIAS cIncAnuVenta
+		SELECT cIncAnuVenta
+		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND status=-4 AND ;
+			ALLTRIM(tipodte)=="IN" AND ALLTRIM(codigogeneracion)==LEFT(ALLTRIM(tcEtapa),80)
+		IF FOUND()
+			REPLACE intentos WITH intentos+1, mensaje WITH LEFT(ALLTRIM(tcMensaje),250), ;
+				motivoerror WITH LEFT(ALLTRIM(tcCodigo),250), fechahora WITH DATETIME()
+		ELSE
+			CALCULATE MAX(intentos) TO lnIntento FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND ALLTRIM(tipodte)=="IN"
+			lnIntento=NVL(lnIntento,0)+1
+			INSERT INTO cIncAnuVenta (iddocto,origen,status,intentos,mensaje,motivoerror,codigogeneracion,fechahora,versiondte,tipodte) ;
+				VALUES (tnIdDocto,"VTA",-4,lnIntento,LEFT(ALLTRIM(tcMensaje),250),LEFT(ALLTRIM(tcCodigo),250), ;
+				LEFT(ALLTRIM(tcEtapa),80),DATETIME(),2,"IN")
+		ENDIF
+		FLUSH IN cIncAnuVenta
+		llGuardada=.T.
+	CATCH TO loError
+		llGuardada=.F.
+	FINALLY
+		IF USED("cIncAnuVenta")
+			USE IN cIncAnuVenta
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+	RETURN llGuardada
+ENDFUNC
+
+
+FUNCTION ResolverInconsistenciaAnulacionVenta
+	LPARAMETERS tnIdDocto, tcEtapa
+	LOCAL lnAreaAnterior, llResuelta, loError
+	lnAreaAnterior=SELECT()
+	llResuelta=.F.
+	TRY
+		USE (pcSysDir+pcDB+"\sisDTE") SHARED AGAIN IN 0 ALIAS cIncResVenta
+		UPDATE cIncResVenta SET status=-5 WHERE iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND ;
+			status=-4 AND ALLTRIM(tipodte)=="IN" AND ALLTRIM(codigogeneracion)==LEFT(ALLTRIM(tcEtapa),80)
+		FLUSH IN cIncResVenta
+		llResuelta=.T.
+	CATCH TO loError
+		llResuelta=.F.
+	FINALLY
+		IF USED("cIncResVenta")
+			USE IN cIncResVenta
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+	RETURN llResuelta
+ENDFUNC
+
+FUNCTION ValidarAnulacionVentaConsistente
+	LPARAMETERS tnIdDocto
+	LOCAL lnAreaAnterior, lcError, lcBase, lnEncabezado, lnDetalle, lnKardex
+	LOCAL lnKardexDoc, lnCxc, lnPartida, lnPartidaDeta, loError
+
+	lnAreaAnterior = SELECT()
+	lcError = ""
+	lcBase = pcSysDir + pcDB + "\"
+	STORE 0 TO lnEncabezado, lnDetalle, lnKardex, lnKardexDoc, lnCxc, lnPartida, lnPartidaDeta
+
+	TRY
+		IF USED("cAuditAnuVenta")
+			USE IN cAuditAnuVenta
+		ENDIF
+		IF USED("cAuditAnuDeta")
+			USE IN cAuditAnuDeta
+		ENDIF
+		IF USED("cAuditAnuKar")
+			USE IN cAuditAnuKar
+		ENDIF
+		IF USED("cAuditAnuKarDoc")
+			USE IN cAuditAnuKarDoc
+		ENDIF
+		IF USED("cAuditAnuCxc")
+			USE IN cAuditAnuCxc
+		ENDIF
+		IF USED("cAuditAnuPar")
+			USE IN cAuditAnuPar
+		ENDIF
+		IF USED("cAuditAnuParDet")
+			USE IN cAuditAnuParDet
+		ENDIF
+
+		USE (lcBase + "cyvventas") SHARED AGAIN IN 0 ALIAS cAuditAnuVenta
+		USE (lcBase + "cyvventasdeta") SHARED AGAIN IN 0 ALIAS cAuditAnuDeta
+		USE (lcBase + "siskardex") SHARED AGAIN IN 0 ALIAS cAuditAnuKar
+		USE (lcBase + "siskardexdoc") SHARED AGAIN IN 0 ALIAS cAuditAnuKarDoc
+		USE (lcBase + "cyvcuentasxcp") SHARED AGAIN IN 0 ALIAS cAuditAnuCxc
+		USE (lcBase + "ctbpartidas") SHARED AGAIN IN 0 ALIAS cAuditAnuPar
+		USE (lcBase + "ctbpartidasdeta") SHARED AGAIN IN 0 ALIAS cAuditAnuParDet
+
+		SELECT cAuditAnuVenta
+		COUNT TO lnEncabezado FOR iddocto = tnIdDocto AND UPPER(ALLTRIM(origen)) == "VTA" AND status = 0 AND eliminado = 0
+		SELECT cAuditAnuDeta
+		COUNT TO lnDetalle FOR iddocto = tnIdDocto AND status <> 0 AND eliminado = 0
+		SELECT cAuditAnuKar
+		COUNT TO lnKardex FOR iddocto = tnIdDocto AND status <> 0 AND eliminado = 0
+		SELECT cAuditAnuKarDoc
+		COUNT TO lnKardexDoc FOR iddocto = tnIdDocto AND status <> 0 AND eliminado = 0
+		SELECT cAuditAnuCxc
+		COUNT TO lnCxc FOR iddocto = tnIdDocto AND status <> 0 AND eliminado = 0
+		SELECT cAuditAnuPar
+		COUNT TO lnPartida FOR idpartida = tnIdDocto AND UPPER(ALLTRIM(origen)) == "VTA" AND monto <> 0 AND eliminado = 0
+		SELECT cAuditAnuParDet
+		COUNT TO lnPartidaDeta FOR idpartida = tnIdDocto AND UPPER(ALLTRIM(origen)) == "VTA" AND (debe <> 0 OR haber <> 0) AND eliminado = 0
+
+		IF lnEncabezado <> 1
+			lcError = lcError + " Encabezado no confirmado como anulado."
+		ENDIF
+		IF lnDetalle > 0
+			lcError = lcError + " Detalle activo: " + ALLTRIM(STR(lnDetalle)) + "."
+		ENDIF
+		IF lnKardex > 0
+			lcError = lcError + " Kardex de inventario activo: " + ALLTRIM(STR(lnKardex)) + "."
+		ENDIF
+		IF lnKardexDoc > 0
+			lcError = lcError + " Kardex documental activo: " + ALLTRIM(STR(lnKardexDoc)) + "."
+		ENDIF
+		IF lnCxc > 0
+			lcError = lcError + " Cuenta por cobrar activa: " + ALLTRIM(STR(lnCxc)) + "."
+		ENDIF
+		IF lnPartida > 0 OR lnPartidaDeta > 0
+			lcError = lcError + " Partida contable con saldo."
+		ENDIF
+	CATCH TO loError
+		lcError = "No se pudo verificar la anulacion: " + loError.Message
+	FINALLY
+		IF USED("cAuditAnuVenta")
+			USE IN cAuditAnuVenta
+		ENDIF
+		IF USED("cAuditAnuDeta")
+			USE IN cAuditAnuDeta
+		ENDIF
+		IF USED("cAuditAnuKar")
+			USE IN cAuditAnuKar
+		ENDIF
+		IF USED("cAuditAnuKarDoc")
+			USE IN cAuditAnuKarDoc
+		ENDIF
+		IF USED("cAuditAnuCxc")
+			USE IN cAuditAnuCxc
+		ENDIF
+		IF USED("cAuditAnuPar")
+			USE IN cAuditAnuPar
+		ENDIF
+		IF USED("cAuditAnuParDet")
+			USE IN cAuditAnuParDet
+		ENDIF
+		IF lnAreaAnterior > 0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN ALLTRIM(lcError)
+ENDFUNC
+
+FUNCTION ValidarAnulacionCompraConsistente
+	LPARAMETERS tnIdDocto
+	LOCAL lnAreaAnterior, lcError, lcBase, lnEncabezado, lnDetalle, lnKardex
+	LOCAL lnKardexDoc, lnCxp, lnPartida, lnPartidaDeta, loError
+
+	lnAreaAnterior = SELECT()
+	lcError = ""
+	lcBase = pcSysDir + pcDB + "\"
+	STORE 0 TO lnEncabezado, lnDetalle, lnKardex, lnKardexDoc, lnCxp, lnPartida, lnPartidaDeta
+
+	TRY
+		IF USED("cAuditAnuCompra")
+			USE IN cAuditAnuCompra
+		ENDIF
+		IF USED("cAuditAnuComDet")
+			USE IN cAuditAnuComDet
+		ENDIF
+		IF USED("cAuditAnuComKar")
+			USE IN cAuditAnuComKar
+		ENDIF
+		IF USED("cAuditAnuComKarDoc")
+			USE IN cAuditAnuComKarDoc
+		ENDIF
+		IF USED("cAuditAnuCxp")
+			USE IN cAuditAnuCxp
+		ENDIF
+		IF USED("cAuditAnuComPar")
+			USE IN cAuditAnuComPar
+		ENDIF
+		IF USED("cAuditAnuComParDet")
+			USE IN cAuditAnuComParDet
+		ENDIF
+
+		USE (lcBase + "cyvcompras") SHARED AGAIN IN 0 ALIAS cAuditAnuCompra
+		USE (lcBase + "cyvcomprasdeta") SHARED AGAIN IN 0 ALIAS cAuditAnuComDet
+		USE (lcBase + "siskardex") SHARED AGAIN IN 0 ALIAS cAuditAnuComKar
+		USE (lcBase + "siskardexdoc") SHARED AGAIN IN 0 ALIAS cAuditAnuComKarDoc
+		USE (lcBase + "cyvcuentasxcp") SHARED AGAIN IN 0 ALIAS cAuditAnuCxp
+		USE (lcBase + "ctbpartidas") SHARED AGAIN IN 0 ALIAS cAuditAnuComPar
+		USE (lcBase + "ctbpartidasdeta") SHARED AGAIN IN 0 ALIAS cAuditAnuComParDet
+
+		SELECT cAuditAnuCompra
+		COUNT TO lnEncabezado FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND (status=0 OR anulado=1 OR eliminado=1)
+		SELECT cAuditAnuComDet
+		COUNT TO lnDetalle FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND status<>0 AND eliminado=0
+		SELECT cAuditAnuComKar
+		COUNT TO lnKardex FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND status<>0 AND eliminado=0
+		SELECT cAuditAnuComKarDoc
+		COUNT TO lnKardexDoc FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND status<>0 AND eliminado=0
+		SELECT cAuditAnuCxp
+		COUNT TO lnCxp FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="CXP" AND status<>0 AND eliminado=0
+		SELECT cAuditAnuComPar
+		COUNT TO lnPartida FOR idpartida=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND monto<>0
+		SELECT cAuditAnuComParDet
+		COUNT TO lnPartidaDeta FOR idpartida=tnIdDocto AND UPPER(ALLTRIM(origen))=="COM" AND (debe<>0 OR haber<>0)
+
+		IF lnEncabezado<>1
+			lcError=lcError+" Encabezado no confirmado como anulado."
+		ENDIF
+		IF lnDetalle>0
+			lcError=lcError+" Detalle activo: "+ALLTRIM(STR(lnDetalle))+"."
+		ENDIF
+		IF lnKardex>0
+			lcError=lcError+" Kardex de inventario activo: "+ALLTRIM(STR(lnKardex))+"."
+		ENDIF
+		IF lnKardexDoc>0
+			lcError=lcError+" Kardex documental activo: "+ALLTRIM(STR(lnKardexDoc))+"."
+		ENDIF
+		IF lnCxp>0
+			lcError=lcError+" Cuenta por pagar activa: "+ALLTRIM(STR(lnCxp))+"."
+		ENDIF
+		IF lnPartida>0 OR lnPartidaDeta>0
+			lcError=lcError+" Partida contable con saldo."
+		ENDIF
+	CATCH TO loError
+		lcError="No se pudo verificar la anulacion de compra: "+loError.Message
+	FINALLY
+		IF USED("cAuditAnuCompra")
+			USE IN cAuditAnuCompra
+		ENDIF
+		IF USED("cAuditAnuComDet")
+			USE IN cAuditAnuComDet
+		ENDIF
+		IF USED("cAuditAnuComKar")
+			USE IN cAuditAnuComKar
+		ENDIF
+		IF USED("cAuditAnuComKarDoc")
+			USE IN cAuditAnuComKarDoc
+		ENDIF
+		IF USED("cAuditAnuCxp")
+			USE IN cAuditAnuCxp
+		ENDIF
+		IF USED("cAuditAnuComPar")
+			USE IN cAuditAnuComPar
+		ENDIF
+		IF USED("cAuditAnuComParDet")
+			USE IN cAuditAnuComParDet
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN ALLTRIM(lcError)
+ENDFUNC
