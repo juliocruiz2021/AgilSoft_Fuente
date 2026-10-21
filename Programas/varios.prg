@@ -42448,7 +42448,6 @@ FUNCTION CrearCursorPendientesDocto
 			FROM cyvventasdeta vd ;
 				INNER JOIN tmp_doc_det od ON vd.idpedidod = od.iddoctod ;
 			WHERE vd.idpedidod <> 0 ;
-				AND vd.status = 1 ;
 				AND vd.eliminado = 0 ;
 				AND vd.cantidad > 0 ;
 			INTO CURSOR tmp_fac_det READWRITE
@@ -42461,9 +42460,7 @@ FUNCTION CrearCursorPendientesDocto
 			FROM tmp_fac_det fd ;
 				INNER JOIN cyvventas fv ON fd.iddoctofac = fv.iddocto ;
 			WHERE fv.origen = "VTA" ;
-				AND fv.status = 1 ;
 				AND fv.eliminado = 0 ;
-				AND fv.anulado = 0 ;
 			GROUP BY fd.iddoctod ;
 			INTO CURSOR tmp_fac_vtp READWRITE
 

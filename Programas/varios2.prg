@@ -16763,7 +16763,9 @@ PROCEDURE ApiPedidosValidarLineas
 	INDEX ON id TAG id
 
 	USE (pcSysDir + pcDB + "\cyvventas") IN 0 SHARED AGAIN ALIAS c_ApiDbVenta
-	SELECT ALLTRIM(numero) AS numero FROM c_ApiDbVenta WHERE UPPER(ALLTRIM(origen)) = "VTP" INTO CURSOR c_ApiExistentes READWRITE
+	SELECT ALLTRIM(numero) AS numero FROM c_ApiDbVenta ;
+		WHERE UPPER(ALLTRIM(origen)) = "VTP" AND status = 1 AND eliminado = 0 AND !DELETED() ;
+		INTO CURSOR c_ApiExistentes READWRITE
 	USE IN c_ApiDbVenta
 	SELECT c_ApiExistentes
 	INDEX ON VAL(ALLTRIM(numero)) TAG numero
