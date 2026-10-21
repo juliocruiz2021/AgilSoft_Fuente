@@ -16089,8 +16089,13 @@ ENDFUNC
 
 
 
-FUNCTION InvalidadDTE_VTA_Sub(lnidDocAnulaDTE,lcOriAnulaDTE,lcmotivoanulaDTEE,lcnotasAnula)
+FUNCTION InvalidadDTE_VTA_Sub(lnidDocAnulaDTE,lcOriAnulaDTE,lcmotivoanulaDTEE,lcnotasAnula,lnidRegistroInvalidacion)
 	&pcArchivosProcedimientos
+	LOCAL lnidEventoInvalidacion
+	lnidEventoInvalidacion=lnidDocAnulaDTE
+	IF PCOUNT()>=5 AND VARTYPE(lnidRegistroInvalidacion)='N' AND lnidRegistroInvalidacion>0
+		lnidEventoInvalidacion=lnidRegistroInvalidacion
+	ENDIF
 	loRetRespu = CREATEOBJECT( 'Empty' )
 	ADDPROPERTY(loRetRespu , 'Status', 'error')
 	ADDPROPERTY(loRetRespu , 'Mensaje', 'Imposible Consultar DTE')
@@ -16307,11 +16312,10 @@ m.DTE_Json_EnvioInVal_Res=lcResultText
 				***** status 2 anulado
 				*REPLACE anulada WITH 1,jsonanulacion WITH jsonRespuesta IN sisdte FOR iddocto=lnidDocAnulaDTE AND origen=lcOriAnulaDTE AND status=1
 				INSERT INTO sisdte (iddocto,origen,status,mensaje,jsonRespuesta,pdf_path) ;
-					VALUES (lnidDocAnulaDTE,lcOriAnulaDTE,2,loRetRespu.Mensaje,lcResultText+CHR(13)+CHR(13)+docJson,lcpdfanula)
+					VALUES (lnidEventoInvalidacion,lcOriAnulaDTE,2,loRetRespu.Mensaje,lcResultText+CHR(13)+CHR(13)+docJson,lcpdfanula)
 				
 				IF lnidDocAnular<>0		&&& se anulo otro dia con un doc de reversion
-					INSERT INTO sisdte (iddocto,origen,status,mensaje,jsonRespuesta) ;
-						VALUES (lnidDocAnular,lcOriAnulaDTE,2,loRetRespu.Mensaje,lcResultText+CHR(13)+CHR(13)+docJson)
+					* La invalidacion pertenece al documento reverso; la factura original permanece activa en SIGA.
 					REPLACE statusdte WITH 2 IN cyvventas FOR iddocto=lnidDocAnulaDTE		&&&& este es el doc que revierte
 				ENDIF 
 
