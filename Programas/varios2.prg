@@ -10787,6 +10787,7 @@ FUNCTION _creaCursorModulos()
 	INSERT INTO sismodulos VALUES (152,'Revision Global de Errores','080404',1)
 	INSERT INTO sismodulos VALUES (153,'Utiliza IA','080405',1)
 	INSERT INTO sismodulos VALUES (154,'Depurar Errores WEB','080406',1)
+	INSERT INTO sismodulos VALUES (155,'Whastapp CRM','080407',1)
 
 
 **	INSERT INTO sismodulos VALUES (105,'','090400',1)
@@ -18045,4 +18046,100 @@ FUNCTION ValidarAnulacionCompraConsistente
 	ENDTRY
 
 	RETURN ALLTRIM(lcError)
+ENDFUNC
+
+FUNCTION ReconciliarEstadosPedidos
+	LPARAMETERS tdDesde, tdHasta, tnIdSucursal
+	LOCAL lnAreaAnterior, ldDesde, ldHasta, lnSucursal, lnReabiertos, lnCerrados
+	LOCAL lnLineas, lnStatusDeseado, lnCumplidoDeseado, lnIdPedido, loError
+	LOCAL llTieneCumplido, lcCumplidoCampo
+
+	lnAreaAnterior = SELECT()
+	ldDesde = IIF(VARTYPE(tdDesde)="D", tdDesde, {})
+	ldHasta = IIF(VARTYPE(tdHasta)="D", tdHasta, {})
+	lnSucursal = IIF(VARTYPE(tnIdSucursal)="N", tnIdSucursal, 0)
+	STORE 0 TO lnReabiertos, lnCerrados, lnLineas
+	llTieneCumplido = TYPE('cyvventasdeta.cumplido')<>'U'
+	lcCumplidoCampo = IIF(llTieneCumplido,'MAX(NVL(od.cumplido,0))','0')
+
+	TRY
+		IF USED("cReconPedidoLineas")
+			USE IN cReconPedidoLineas
+		ENDIF
+		IF USED("cReconPedidos")
+			USE IN cReconPedidos
+		ENDIF
+
+		SELECT od.iddocto, od.iddoctod, od.cantidad, &lcCumplidoCampo AS cumplido, ;
+			SUM(IIF(NVL(vd.status,0)=1 AND NVL(vd.eliminado,0)=0 AND ;
+				NVL(fv.status,0)=1 AND NVL(fv.anulado,0)=0 AND NVL(fv.eliminado,0)=0, vd.cantidad, 0000000000.00000000)) AS facturado, ;
+			SUM(IIF(NVL(vd.iddocto,0)<>0,1,0)) AS vinculadas, ;
+			SUM(IIF(NVL(vd.iddocto,0)<>0 AND ;
+				(NVL(vd.status,0)<>1 OR NVL(vd.eliminado,0)<>0 OR ;
+				NVL(fv.status,0)<>1 OR NVL(fv.anulado,0)<>0 OR NVL(fv.eliminado,0)<>0),1,0)) AS inactivas ;
+			FROM cyvventas o ;
+			INNER JOIN cyvventasdeta od ON od.iddocto=o.iddocto AND od.status=1 AND od.eliminado=0 ;
+			LEFT JOIN cyvventasdeta vd ON vd.idpedidod=od.iddoctod ;
+			LEFT JOIN cyvventas fv ON fv.iddocto=vd.iddocto AND fv.origen='VTA' ;
+			WHERE o.origen='VTP' AND o.status=1 AND o.anulado=0 AND o.eliminado=0 AND ;
+				(EMPTY(ldDesde) OR o.fechadocto>=ldDesde) AND ;
+				(EMPTY(ldHasta) OR o.fechadocto<=ldHasta) AND ;
+				(lnSucursal=0 OR o.idsucursal=lnSucursal) ;
+			GROUP BY od.iddocto, od.iddoctod, od.cantidad ;
+			INTO CURSOR cReconPedidoLineas READWRITE
+
+		SELECT iddocto, SUM(vinculadas) AS vinculadas, SUM(inactivas) AS inactivas, ;
+			SUM(IIF(cantidad>facturado,1,0)) AS pendientes ;
+			FROM cReconPedidoLineas ;
+			GROUP BY iddocto ;
+			HAVING SUM(inactivas)>0 ;
+			INTO CURSOR cReconPedidos READWRITE
+
+		SELECT cReconPedidos
+		SCAN
+			lnIdPedido = cReconPedidos.iddocto
+			lnStatusDeseado = IIF(cReconPedidos.pendientes>0,1,0)
+
+			IF llTieneCumplido
+				SELECT cReconPedidoLineas
+				SCAN FOR iddocto=lnIdPedido AND cumplido<>IIF(cantidad<=facturado,1,0)
+					lnCumplidoDeseado = IIF(cReconPedidoLineas.cantidad<=cReconPedidoLineas.facturado,1,0)
+					UPDATE cyvventasdeta SET cumplido=lnCumplidoDeseado, fecmod=DATETIME(), ;
+						nodo=pcnodo, iduser=pnidusuario, pcuser=SYS(0) ;
+						WHERE iddoctod=cReconPedidoLineas.iddoctod
+					lnLineas = lnLineas + _TALLY
+				ENDSCAN
+			ENDIF
+
+			* El listado de SIGA filtra Abierto/Cerrado con cantidadpedido.
+			* Solo las facturas activas consumen cantidades del pedido.
+			SELECT cReconPedidoLineas
+			SCAN FOR iddocto=lnIdPedido
+				UPDATE siskardex SET cantidadpedido=cReconPedidoLineas.facturado, ;
+					fecmod=DATETIME(), nodo=pcnodo, iduser=pnidusuario, pcuser=SYS(0) ;
+					WHERE iddoctod=cReconPedidoLineas.iddoctod AND origen='VTP' AND ;
+					status=1 AND eliminado=0 AND ;
+					ABS(cantidadpedido-cReconPedidoLineas.facturado)>.0001
+				lnLineas = lnLineas + _TALLY
+			ENDSCAN
+
+			* status=1 identifica un pedido vigente, aun cuando ya fue facturado.
+			* Cerrado/Pendiente se deriva de las cantidades y no cambia la cabecera.
+			SELECT cReconPedidos
+		ENDSCAN
+	CATCH TO loError
+		WAIT WINDOW "No se pudo reconciliar el estado de pedidos: "+loError.Message NOWAIT
+	FINALLY
+		IF USED("cReconPedidoLineas")
+			USE IN cReconPedidoLineas
+		ENDIF
+		IF USED("cReconPedidos")
+			USE IN cReconPedidos
+		ENDIF
+		IF lnAreaAnterior>0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN lnReabiertos+lnCerrados
 ENDFUNC
