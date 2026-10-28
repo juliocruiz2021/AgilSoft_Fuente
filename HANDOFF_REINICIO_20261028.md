@@ -4,6 +4,13 @@
 
 Continuar exclusivamente con DIPRO hasta estabilizar SIGA y luego repetir las pruebas equivalentes en Web. No desplegar a produccion ni migrar otros tenants hasta completar las pruebas cruzadas.
 
+## Resultado despues del reinicio
+
+- Julio confirmo que pudo crear pedidos y facturar nuevamente sin cambiar las fuentes despues del reinicio; esto es compatible con codigo/formularios antiguos retenidos por VFP en memoria durante las fallas anteriores.
+- El estado funcional se congelo con la etiqueta Git remota `functional-20261028-post-restart` en VFP, API y Dashboard.
+- Respaldo fisico: `D:\Respaldos_Codex\SIGA\20261028_post_reinicio_funcional`, 476 archivos y 148,599,978 bytes; manifiesto SHA-256 verificado sin diferencias. Incluye PRG/FXP/formularios, publicacion API win-x86 y `dist` del Dashboard. `sistema.pjx/pjt` permanecieron bloqueados por el proyecto VFP abierto, pero el arbol fuente completo esta protegido por Git.
+- No se debe volver a pegar ni recompilar parcialmente codigo ya presente. Si se cambia un formulario, cerrar primero sus instancias y el disenador, respaldar el par SCX/SCT y compilarlo completo antes de probar desde una sesion nueva.
+
 ## Estado general
 
 - Los cierres observados son fallos nativos de `vfp9.exe` en `MSVCR71.dll`, normalmente como una pareja `c0000027` seguida de `c000041d`, desplazamiento `00002526`.
