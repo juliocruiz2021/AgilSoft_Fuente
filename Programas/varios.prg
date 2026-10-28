@@ -2532,7 +2532,7 @@ FUNCTION ImprimirCinta(ldfec1 as date,lncaj1 as Integer ,lnCtrl as Integer )
 						"t10.codcajban,t10.cajban,t10.cuenta,t10.tipocajban,t13.codclipro,"+;
 						"pcnomempresa as nomempresa,pcgiro as giroempresa,pcnit as nitempresa,pcnrc as nrcempresa, "+;
 						"t12.fecultilectura,t12.ultimalectura,t12.fecha as fechalectura,t12.lectura,t12.consumo,t14.codtarifa,t13.saldo as saldoclipro, "+;
-						"NVL((select IIF(ctrolcxcp=1,totaldocto+cargoabono,IIF(ctrolcxcp=2,totaldocto*-1+cargoabono,0)) from siskardexdoc where iddocto=t1.iddocto and status=1 and condipago=1),000000000.000000) as saldodoc "+;
+						"NVL((select IIF(ctrolcxcp=1,totaldocto,totaldocto*-1)+cargoabono from siskardexdoc where iddocto=t1.iddocto and status=1 and condipago=1),000000000.000000) as saldodoc "+;
 						"FROM impvta t1 "+;
 							"left join impcata t3 on t1.idagente=t3.id and t3.origen='VEN' "+;
 							"inner join imptdoc t4 on t1.idtipodocto=t4.idtipodocto "+;
@@ -2935,7 +2935,7 @@ pcRastrear=pcRastrear+'Imprimir Fac- 1 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						"t12.fecultilectura,t12.ultimalectura,t12.fecha as fechalectura,t12.lectura,t12.consumo,"+;
 						"t14.codtarifa,t13.saldo as saldoclipro,t13.saldo as saldocliprov,"+;
 						"nvl(t15.notas,'*'+SPACE(100)) AS impresorfamilia, NVL(t16.nombre,SPACE(30)) as mesa,"+;
-						"NVL((select IIF(ctrolcxcp=1,totaldocto+cargoabono,IIF(ctrolcxcp=2,totaldocto*-1+cargoabono,0)) from siskardexdoc "+;
+						"NVL((select IIF(ctrolcxcp=1,totaldocto,totaldocto*-1)+cargoabono from siskardexdoc "+;
 						"where iddocto=t1.iddocto and status=1 and condipago=1),000000000.000000) as saldodoc, "+;
 						"t11.esnota,NVL(DTE.pdf_path,SPACE(250)) as pdf_path,Dte.versiondte,"+;
 						"Dte.modelofacturacion,Dte.tipotransmision,Dte.fechahora as fechahoraDTE, "+;
@@ -2981,7 +2981,7 @@ pcRastrear=pcRastrear+'Imprimir Fac- 1 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						"t12.fecultilectura,t12.ultimalectura,t12.fecha as fechalectura,t12.lectura,t12.consumo,"+;
 						"t14.codtarifa,t13.saldo as saldoclipro,t13.saldo as saldocliprov,"+;
 						"nvl(t15.notas,'*'+SPACE(100)) AS impresorfamilia, NVL(t16.nombre,SPACE(30)) as mesa,"+;
-						"NVL((select IIF(ctrolcxcp=1,totaldocto+cargoabono,IIF(ctrolcxcp=2,totaldocto*-1+cargoabono,0)) from siskardexdoc "+;
+						"NVL((select IIF(ctrolcxcp=1,totaldocto,totaldocto*-1)+cargoabono from siskardexdoc "+;
 						"where iddocto=t1.iddocto and status=1 and condipago=1),000000000.000000) as saldodoc, "+;
 						"t11.esnota,NVL(DTE.pdf_path,SPACE(250)) as pdf_path,Dte.versiondte,"+;
 						"Dte.modelofacturacion,Dte.tipotransmision,Dte.fechahora as fechahoraDTE, "+;
@@ -3906,9 +3906,8 @@ pcRastrear=pcRastrear+'Imprimir Fac- 7 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						
 						GO TOP IN c_impdeta
 					
-						* FoxyPreviewer puede cerrar el alias privado c_imp al generar el PDF.
-						* No continuar sobre un cursor inexistente: causaba error 13 y cierre de VFP.
-						IF llseimprimio=1		&&& cambiando status de Impreso
+						GO TOP IN c_imp
+						IF c_imp.impreso=0 AND llseimprimio=1		&&& cambiando status de Impreso
 							=miSQLEXEC(lnidSQL,"update cyvventas set impreso=1 where impreso=0 and iddocto="+ALLTRIM(STR(lnIdDocto))+" ")
 						ENDIF
 						******** imprimendo el lote
@@ -3924,12 +3923,8 @@ pcRastrear=pcRastrear+'Imprimir Fac- 7 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 							*MODIFY REPORT pcSysDir+pcdb+"\formatos\"+lcArchivo
 							REPORT FORM pcSysDir+pcdb+"\formatos\"+lcArchivo PREVIEW NOCONSOLE 
 						ENDIF 
-						IF USED("c_impdeta")
-							GO TOP IN c_impdeta
-						ENDIF
-						IF USED("c_imp")
-							GO TOP IN c_imp
-						ENDIF
+						GO TOP IN c_impdeta
+						GO TOP IN c_imp
 						
 						* SIGA Documentos: generar y encolar el soporte de la venta.
 						IF TYPE("pnUsaSigaDocumentos") = "N"
@@ -3967,9 +3962,7 @@ pcRastrear=pcRastrear+'Imprimir Fac- 7 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 		ELSE
 			_MostrarErroresSQL(lnidSQL)
 		ENDIF 
-		IF USED("c_imp")
-			USE IN c_imp
-		ENDIF
+		USE in c_imp
 		IF USED("c_impdeta")
 			USE IN c_impdeta
 		ENDIF 
@@ -4054,7 +4047,7 @@ FUNCTION ImprimirFacturaCompra(lnIdDocto as Integer,lnCtrl as Integer ,lnIdConec
 						"pcnomempresa as nomempresa,pcgiro as giroempresa,pcnit as nitempresa,pcnrc as nrcempresa,NVL(DTE.pdf_path,SPACE(250)) as pdf_path,Dte.versiondte,"+;
 						"Dte.modelofacturacion,Dte.tipotransmision,Dte.fechahora as fechahoraDTE, "+;
 						"t17.valor TipoEstablecimiento,space(250) as urlQR,t12.pasaporte,t12.otro,"+;
-						"NVL((select IIF(ctrolcxcp=1,totaldocto+cargoabono,IIF(ctrolcxcp=2,totaldocto*-1+cargoabono,0)) "+;
+						"NVL((select IIF(ctrolcxcp=1,totaldocto,totaldocto*-1)+cargoabono "+;
 									"from siskardexdoc where iddocto=t1.iddocto and status=1 and condipago=1),000000000.000000) as saldodoc,"+;
 									"t11.esnota "+;
 						"FROM impcmp t1 "+;
@@ -8210,8 +8203,6 @@ FUNCTION _generaPartidaCompras(lnsqlid,lnidDoc,lnTipConec)
 						left JOIN cybcajabancos t6 ON t1.idcajban=t6.idcajban;
 				WHERE t1.noContabilizable=0 AND t0.iddocto=lnidDoc ORDER BY t0.tipoprod,t2.codprod,t0.producto,t0.idctrocosto INTO CURSOR c_PartTmp READWRITE 
 			
-			* Control 0 no genera partida; solo 1 y 2 tienen efecto contable.
-			IF INLIST(NVL(c_PartTmp.ctrolcom,0),1,2)
 			*lnConRenta=c_PartTmp.condipago=0 and rentadocto<>0
 			lnConRenta=c_PartTmp.rentadocto<>0
 			
@@ -8577,8 +8568,7 @@ FUNCTION _generaPartidaCompras(lnsqlid,lnidDoc,lnTipConec)
 				ENDIF 
 				USE IN  c_miPartida
 			
-			ENDIF
-			ENDIF
+			ENDIF 
 		
 			* Una compra anulada nunca debe conservar importes contables, incluso si
 			* cambio la configuracion contable o quedaron lineas antiguas sin empatar.
@@ -11772,17 +11762,17 @@ FUNCTION BuscarCodNombre(lnIdCon as Integer,lcTabla as Character,lnIdBuscar as v
 						"cyvclipro.ultimoConsumo,cyvclipro.ultimoCuotasMora,cyvclipro.ultimoEstadoMedidor,cyvclipro.ultimoreferencia,correoDTE,codGiro "
 						
 			lcTabla2="cyv"+lcTabla+" left join (SELECT a.idclipro,CNT(*) as cantdocsaldovencidos,"+;
-											"SUM(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),IIF(a.ctrolcxcp=2,-a.totaldocto+NVL(a.cargoabono,0.000000),0))) as saldo "+;
+											"SUM(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),-a.totaldocto+NVL(a.cargoabono,0.000000))) as saldo "+;
 										"FROM siskardexdoc a inner join cyvclipro b on a.idclipro=b.idclipro "+;
 										"where ALLTRIM(b.codclipro)+' '='"+ALLTRIM(lnIdBuscar)+" ' and "+;
 											"a.condipago=1 AND a.status=1 AND a.eliminado=0 AND "+;
-											"(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),IIF(a.ctrolcxcp=2,-a.totaldocto+NVL(a.cargoabono,0.000000),0)))<>0 "+;
+											"(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),-a.totaldocto+NVL(a.cargoabono,0.000000)))<>0 "+;
 											"and (DATE()-a.fechavenci)>0 GROUP BY a.idclipro) as aa on cyvclipro.idclipro=aa.idclipro "+;
 									"left join (SELECT a.idclipro,CNT(*) as cantdocsaldo "+;
 										"FROM siskardexdoc a inner join cyvclipro b on a.idclipro=b.idclipro "+;
 										"where ALLTRIM(codclipro)+' '='"+ALLTRIM(lnIdBuscar)+" ' and "+;
 											"a.condipago=1 AND a.status=1 AND a.eliminado=0 AND "+;
-											"(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),IIF(a.ctrolcxcp=2,-a.totaldocto+NVL(a.cargoabono,0.000000),0)))<>0 "+;
+											"(IIF(a.ctrolcxcp=1,a.totaldocto+NVL(a.cargoabono,0.000000),-a.totaldocto+NVL(a.cargoabono,0.000000)))<>0 "+;
 											"GROUP BY a.idclipro) as bb on cyvclipro.idclipro=bb.idclipro "+;
 									"left join cyvtarifas ww on cyvclipro.idtarifa=ww.idtarifa "
 			lcCobBusN="codclipro"
@@ -18758,9 +18748,9 @@ FUNCTION _RecalcularSaldosdeClientesyProveedores(lcMiorigenRecostear)
 		lcinner='left join cyvcompras t3 on t0.iddocto=t3.iddocto '
 	ENDIF 
 	lccomando="SELECT t0.idclipro,t0.saldo "
-			lcfrom="FROM (SELECT t1.fechadocto,IIF(t1.ctrolcxcp=1,'C',IIF(t1.ctrolcxcp=2,'A','')) AS carabo,t1.numero,t1.fechavenci,DATE()-t1.fechavenci as dias,"+;
-										"IIF(t1.ctrolcxcp=1,t1.totaldocto-t1.rentadocto,IIF(t1.ctrolcxcp=2,(t1.totaldocto-t1.rentadocto)*-1,0)) as totaldocto,"+;
-										"IIF(t1.ctrolcxcp=1,t1.totaldocto-t1.rentadocto+NVL(t5.cargoabono,0.000000),IIF(t1.ctrolcxcp=2,-(t1.totaldocto-t1.rentadocto)+NVL(t5.cargoabono,0.000000),0)) as saldo,t1.idclipro,"+;
+			lcfrom="FROM (SELECT t1.fechadocto,IIF(t1.ctrolcxcp=1,'C','A') AS carabo,t1.numero,t1.fechavenci,DATE()-t1.fechavenci as dias,"+;
+										"IIF(t1.ctrolcxcp=1,t1.totaldocto-t1.rentadocto,(t1.totaldocto-t1.rentadocto)*-1) as totaldocto,"+;
+										"IIF(t1.ctrolcxcp=1,t1.totaldocto-t1.rentadocto+NVL(t5.cargoabono,0.000000),-(t1.totaldocto-t1.rentadocto)+NVL(t5.cargoabono,0.000000)) as saldo,t1.idclipro,"+;
 										"t1.iddocto,t1.idtipodocto,t1.condipago,t1.origen,t1.idsucursal "+;
 									"FROM siskardexdoc t1 "+;
 										"left join (SELECT iddocto,SUM(IIF(carabo=1,monto*-1,monto)) as cargoabono from siskardexapli "+;
@@ -18810,160 +18800,6 @@ FUNCTION _RecalcularSaldosdeClientesyProveedores(lcMiorigenRecostear)
 	ENDIF 
 	WAIT WINDOW "Saldos Actualizados " NOWAIT 
 ENDFUNC 
-
-
-FUNCTION _AgregarKardexDocFaltantesAlIngresar
-	LOCAL lcAliasAnterior, llSincronizandoAnterior, llTeniaSincronizando, ;
-		llAbrioVentas, llAbrioCompras, llAbrioBancos, llAbrioCxcp, ;
-		llAbrioKardex, lnPendientes, loError
-
-	lcAliasAnterior=ALIAS()
-	llTeniaSincronizando=TYPE("pnSincronizandoTablas")="L"
-	llSincronizandoAnterior=.F.
-	IF llTeniaSincronizando
-		llSincronizandoAnterior=pnSincronizandoTablas
-	ENDIF
-	llAbrioVentas=.F.
-	llAbrioCompras=.F.
-	llAbrioBancos=.F.
-	llAbrioCxcp=.F.
-	llAbrioKardex=.F.
-	lnPendientes=0
-
-	TRY
-		pnSincronizandoTablas=.T.
-
-		IF !USED("siskardexdoc")
-			USE pcSysDir+pcdb+"\siskardexdoc" IN 0 SHARED AGAIN ALIAS siskardexdoc
-			llAbrioKardex=.T.
-		ENDIF
-		IF !USED("cyvventas")
-			USE pcSysDir+pcdb+"\cyvventas" IN 0 SHARED AGAIN ALIAS cyvventas
-			llAbrioVentas=.T.
-		ENDIF
-		IF !USED("cyvcompras")
-			USE pcSysDir+pcdb+"\cyvcompras" IN 0 SHARED AGAIN ALIAS cyvcompras
-			llAbrioCompras=.T.
-		ENDIF
-		IF !USED("cybmovimientos")
-			USE pcSysDir+pcdb+"\cybmovimientos" IN 0 SHARED AGAIN ALIAS cybmovimientos
-			llAbrioBancos=.T.
-		ENDIF
-		IF !USED("cyvcuentasxcp")
-			USE pcSysDir+pcdb+"\cyvcuentasxcp" IN 0 SHARED AGAIN ALIAS cyvcuentasxcp
-			llAbrioCxcp=.T.
-		ENDIF
-
-		* Cada UPDATE conserva los datos y dispara la funcion historica del DBC.
-		SELECT a.iddocto,a.idtipodocto ;
-			FROM cyvcompras a ;
-			LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND a.idtipodocto=b.idtipodocto ;
-			WHERE a.status=1 AND ;
-				a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 ;
-			INTO CURSOR c_loginKarCom READWRITE
-		lnPendientes=lnPendientes+RECCOUNT("c_loginKarCom")
-		UPDATE cyvcompras SET pcuser=pcuser WHERE STR(iddocto)+STR(idtipodocto) IN ;
-			(SELECT STR(iddocto)+STR(idtipodocto) FROM c_loginKarCom)
-
-		SELECT a.iddocto,a.idtipodocto ;
-			FROM cyvventas a ;
-			LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND a.idtipodocto=b.idtipodocto ;
-			WHERE a.status=1 AND ;
-				a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 ;
-			INTO CURSOR c_loginKarVta READWRITE
-		lnPendientes=lnPendientes+RECCOUNT("c_loginKarVta")
-		UPDATE cyvventas SET pcuser=pcuser WHERE STR(iddocto)+STR(idtipodocto) IN ;
-			(SELECT STR(iddocto)+STR(idtipodocto) FROM c_loginKarVta)
-
-		SELECT a.iddocto,a.idtipodocto ;
-			FROM cybmovimientos a ;
-			LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND a.idtipodocto=b.idtipodocto ;
-			WHERE a.status=1 AND ;
-				a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 ;
-			INTO CURSOR c_loginKarBco READWRITE
-		lnPendientes=lnPendientes+RECCOUNT("c_loginKarBco")
-		UPDATE cybmovimientos SET pcuser=pcuser WHERE STR(iddocto)+STR(idtipodocto) IN ;
-			(SELECT STR(iddocto)+STR(idtipodocto) FROM c_loginKarBco)
-
-		* Se revisa al final para no duplicar lo ya reconstruido desde VTA, COM o CYB.
-		SELECT a.iddocto,a.idtipodocto ;
-			FROM cyvcuentasxcp a ;
-			LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND a.idtipodocto=b.idtipodocto ;
-			WHERE a.status=1 AND a.anulado=0 AND ;
-				a.eliminado=0 AND NVL(b.iddocto,0)=0 ;
-			INTO CURSOR c_loginKarCxp READWRITE
-		lnPendientes=lnPendientes+RECCOUNT("c_loginKarCxp")
-		UPDATE cyvcuentasxcp SET pcuser=pcuser WHERE STR(iddocto)+STR(idtipodocto) IN ;
-			(SELECT STR(iddocto)+STR(idtipodocto) FROM c_loginKarCxp)
-
-		IF lnPendientes>0
-			* Libera solo las tablas abiertas aqui antes de ejecutar los recalculos existentes.
-			IF llAbrioVentas AND USED("cyvventas")
-				USE IN cyvventas
-				llAbrioVentas=.F.
-			ENDIF
-			IF llAbrioCompras AND USED("cyvcompras")
-				USE IN cyvcompras
-				llAbrioCompras=.F.
-			ENDIF
-			IF llAbrioBancos AND USED("cybmovimientos")
-				USE IN cybmovimientos
-				llAbrioBancos=.F.
-			ENDIF
-			IF llAbrioCxcp AND USED("cyvcuentasxcp")
-				USE IN cyvcuentasxcp
-				llAbrioCxcp=.F.
-			ENDIF
-			IF llAbrioKardex AND USED("siskardexdoc")
-				USE IN siskardexdoc
-				llAbrioKardex=.F.
-			ENDIF
-			_RecalcularSaldosdeClientesyProveedores('CLI')
-			_RecalcularSaldosdeClientesyProveedores('PRV')
-			_recalcularSaldosBancos()
-		ENDIF
-	CATCH TO loError
-		lnPendientes=-1
-	FINALLY
-		IF USED("c_loginKarCom")
-			USE IN c_loginKarCom
-		ENDIF
-		IF USED("c_loginKarVta")
-			USE IN c_loginKarVta
-		ENDIF
-		IF USED("c_loginKarBco")
-			USE IN c_loginKarBco
-		ENDIF
-		IF USED("c_loginKarCxp")
-			USE IN c_loginKarCxp
-		ENDIF
-		IF llAbrioVentas AND USED("cyvventas")
-			USE IN cyvventas
-		ENDIF
-		IF llAbrioCompras AND USED("cyvcompras")
-			USE IN cyvcompras
-		ENDIF
-		IF llAbrioBancos AND USED("cybmovimientos")
-			USE IN cybmovimientos
-		ENDIF
-		IF llAbrioCxcp AND USED("cyvcuentasxcp")
-			USE IN cyvcuentasxcp
-		ENDIF
-		IF llAbrioKardex AND USED("siskardexdoc")
-			USE IN siskardexdoc
-		ENDIF
-		IF llTeniaSincronizando
-			pnSincronizandoTablas=llSincronizandoAnterior
-		ELSE
-			pnSincronizandoTablas=.F.
-		ENDIF
-		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
-			SELECT (lcAliasAnterior)
-		ENDIF
-	ENDTRY
-
-	RETURN lnPendientes
-ENDFUNC
 
 
 FUNCTION _AgregandoKardexDocPendientes(lnLimpiar,lnidCliproFil,lnidcajbcoFil)
@@ -19066,7 +18902,7 @@ FUNCTION _AgregandoKardexDocPendientes(lnLimpiar,lnidCliproFil,lnidcajbcoFil)
 	SELECT a.iddocto,a.idtipodocto ;
 		FROM cyvcompras a ;
 		LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND  a.idtipodocto=b.idtipodocto ;
-		WHERE a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
+		WHERE a.noContabilizable=0 AND a.ctrolcom<>0 AND a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
 	INTO CURSOR c_malosC READWRITE
 	UPDATE cyvcompras  SET pcuser=ALLTRIM(pcuser)+' ' WHERE STR(iddocto)+STR(idtipodocto) in (selec STR(iddocto)+STR(idtipodocto) from c_malosC)
 	
@@ -19075,7 +18911,7 @@ FUNCTION _AgregandoKardexDocPendientes(lnLimpiar,lnidCliproFil,lnidcajbcoFil)
 	SELECT a.iddocto,a.idtipodocto ;
 		FROM cyvventas a ;
 		LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND  a.idtipodocto=b.idtipodocto ;
-		WHERE a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
+		WHERE a.noContabilizable=0 AND a.ctrolvta<>0 AND a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
 	INTO CURSOR c_malosV READWRITE
 	UPDATE cyvventas  SET pcuser=ALLTRIM(pcuser)+' ' WHERE STR(iddocto)+STR(idtipodocto) in (selec STR(iddocto)+STR(idtipodocto) from c_malosV)
 
@@ -19084,7 +18920,7 @@ FUNCTION _AgregandoKardexDocPendientes(lnLimpiar,lnidCliproFil,lnidcajbcoFil)
 	SELECT a.iddocto,a.idtipodocto ;
 		FROM cybmovimientos a ;
 		LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND  a.idtipodocto=b.idtipodocto ;
-		WHERE a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro &lcFilcajbanco ;
+		WHERE a.ctrolcyb<>0 AND a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro &lcFilcajbanco ;
 	INTO CURSOR c_malosB READWRITE
 	UPDATE cybmovimientos  SET pcuser=ALLTRIM(pcuser)+' ' WHERE STR(iddocto)+STR(idtipodocto) in (selec STR(iddocto)+STR(idtipodocto) from c_malosB)
 
@@ -19093,12 +18929,14 @@ FUNCTION _AgregandoKardexDocPendientes(lnLimpiar,lnidCliproFil,lnidcajbcoFil)
 	SELECT a.iddocto,a.idtipodocto ;
 		FROM cyvcuentasxcp a ;
 		LEFT JOIN siskardexdoc b ON a.iddocto=b.iddocto AND  a.idtipodocto=b.idtipodocto ;
-		WHERE a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
+		WHERE a.CtrolcxCP<>0 AND a.status=1 AND a.anulado=0 AND a.eliminado=0 AND NVL(b.iddocto,0)=0 &lcFilclipro ;
 	INTO CURSOR c_malosCP READWRITE
 	UPDATE cyvcuentasxcp  SET pcuser=ALLTRIM(pcuser)+' ' WHERE STR(iddocto)+STR(idtipodocto) in (selec STR(iddocto)+STR(idtipodocto) from c_malosCP)
 
-	*** Los documentos no contabilizables conservan su espejo informativo en siskardexdoc.
-
+	*** eliminando no contabilizados
+	DELETE FROM siskardexdoc WHERE noContabilizable=1
+	
+	
 	USE IN ctbpartidas
 	USE IN ctbpartidasdeta
 	USE pcSysDir+pcdb+"\ctbpartidas" IN 0 SHARE AGAIN 
@@ -19433,7 +19271,7 @@ FUNCTION _ValidarExistenciasRecostear(lnidprorecostear as Integer)
 				a.factor,a.costounitario,a.costounimed,IIF(a.ctrolinv=1,a.costototal,a.costototal*-1) as costototal,;
 				000000000.000000 as costounitarion,000000000.000000 as costounimedn,000000000.000000 as costototaln,000000000.000000 as existencia,000000000.000000 as costoacumulado,;
 				a.idbodega,a.idbodegatras,a.origen,a.fechadocto,a.ctrolinv,a.iddocto,a.iddoctod,000000000 as llave,;
-				IIF(INLIST(a.ctrolinv,2,3),2,1) as entsal,a.horadocto,e.afectaprom,a.llavelote ;
+				IIF(a.ctrolinv=2,2,1) as entsal,a.horadocto,e.afectaprom,a.llavelote ;
 			FROM c_kar a ;
 			left JOIN c_cxcMov b ON a.iddocto=b.iddocto ;
 			INNER JOIN c_tipdo e ON a.idtipodocto=e.idtipodocto ;
@@ -42598,7 +42436,6 @@ FUNCTION CrearCursorPendientesDocto
 			FROM cyvventasdeta d ;
 				INNER JOIN tmp_doc_enc e ON d.iddocto = e.iddocto ;
 			WHERE d.origen = "VTP" ;
-				AND d.status = 1 ;
 				AND d.eliminado = 0 ;
 			INTO CURSOR tmp_doc_det READWRITE
 
@@ -42611,7 +42448,6 @@ FUNCTION CrearCursorPendientesDocto
 			FROM cyvventasdeta vd ;
 				INNER JOIN tmp_doc_det od ON vd.idpedidod = od.iddoctod ;
 			WHERE vd.idpedidod <> 0 ;
-				AND vd.status = 1 ;
 				AND vd.eliminado = 0 ;
 				AND vd.cantidad > 0 ;
 			INTO CURSOR tmp_fac_det READWRITE
@@ -42624,8 +42460,6 @@ FUNCTION CrearCursorPendientesDocto
 			FROM tmp_fac_det fd ;
 				INNER JOIN cyvventas fv ON fd.iddoctofac = fv.iddocto ;
 			WHERE fv.origen = "VTA" ;
-				AND fv.status = 1 ;
-				AND fv.anulado = 0 ;
 				AND fv.eliminado = 0 ;
 			GROUP BY fd.iddoctod ;
 			INTO CURSOR tmp_fac_vtp READWRITE
@@ -44717,66 +44551,4 @@ FUNCTION DebeSincronizarVentaIM
 	ENDTRY
 
 	RETURN llSincroniza
-ENDFUNC
-FUNCTION PrepararDetallePartidasReportes
-	LPARAMETERS pdHasta
-	LOCAL llResultado, lcAliasAnterior, loError
-
-	llResultado = .F.
-	lcAliasAnterior = ALIAS()
-	IF VARTYPE(pdHasta) <> "D" OR EMPTY(pdHasta)
-		RETURN .F.
-	ENDIF
-
-	TRY
-		IF USED("c_reportPartidas")
-			USE IN c_reportPartidas
-		ENDIF
-
-		* Regla contable de reportes: conservar la fila anulada/eliminada con valores cero.
-		SELECT d.* ;
-			FROM ctbpartidasdeta d ;
-			INNER JOIN (SELECT p.idpartida,p.origen,p.fechapartida ;
-				FROM ctbpartidas p ;
-				WHERE p.origen<>"CYB" AND p.fechapartida<=m.pdHasta ;
-				UNION ALL ;
-				SELECT z.iddocto AS idpartida,z.origen,z.fechadocto AS fechapartida ;
-				FROM cybmovimientos z ;
-				WHERE z.fechadocto<=m.pdHasta) h ;
-			ON d.idpartida=h.idpartida AND d.origen=h.origen ;
-			INTO CURSOR c_reportPartidas READWRITE
-
-		REPLACE debe WITH 0, haber WITH 0 FOR NVL(eliminado,0)<>0 IN c_reportPartidas
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM ctbpartidas p ;
-			WHERE c_reportPartidas.idpartida=p.idpartida ;
-			AND c_reportPartidas.origen=p.origen AND NVL(p.eliminado,0)<>0
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cybmovimientos z ;
-			WHERE c_reportPartidas.idpartida=z.iddocto AND c_reportPartidas.origen=z.origen ;
-			AND (NVL(z.status,0)=0 OR NVL(z.anulado,0)<>0 OR NVL(z.eliminado,0)<>0)
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvventas v ;
-			WHERE c_reportPartidas.idpartida=v.iddocto AND c_reportPartidas.origen=v.origen ;
-			AND (NVL(v.status,0)=0 OR NVL(v.anulado,0)<>0 OR NVL(v.eliminado,0)<>0)
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvcompras c ;
-			WHERE c_reportPartidas.idpartida=c.iddocto AND c_reportPartidas.origen=c.origen ;
-			AND (NVL(c.status,0)=0 OR NVL(c.anulado,0)<>0 OR NVL(c.eliminado,0)<>0)
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM invinventarios i ;
-			WHERE c_reportPartidas.idpartida=i.iddocto AND c_reportPartidas.origen=i.origen ;
-			AND (NVL(i.status,0)=0 OR NVL(i.anulado,0)<>0 OR NVL(i.eliminado,0)<>0)
-		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvcuentasxcp x ;
-			WHERE c_reportPartidas.idpartida=x.iddocto AND c_reportPartidas.origen=x.origen ;
-			AND (NVL(x.status,0)=0 OR NVL(x.anulado,0)<>0 OR NVL(x.eliminado,0)<>0)
-
-		llResultado = .T.
-	CATCH TO loError
-		IF USED("c_reportPartidas")
-			USE IN c_reportPartidas
-		ENDIF
-		llResultado = .F.
-	FINALLY
-		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
-			SELECT (lcAliasAnterior)
-		ENDIF
-	ENDTRY
-
-	RETURN llResultado
 ENDFUNC

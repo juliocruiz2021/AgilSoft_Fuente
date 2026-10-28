@@ -3238,9 +3238,7 @@ PROCEDURE _insertkardexcliprocajban
 		USE pcsysdir+pcDB+"\cybcajabancos" IN 0 SHARED AGAIN ALIAS tacajban ORDER idcajban
 	ENDIF 
 
-	* Un control cero conserva el documento, pero no afecta caja/banco ni valida _TALLY.
-	IF lnEntSalcyv<>0 AND ;
-		(lcorigenpagcyv='CYB' OR (lcorigenpagcyv<>'CYB' AND lncondipagcyv=0))		&&& caja y bancos
+	IF lcorigenpagcyv='CYB' OR (lcorigenpagcyv<>'CYB' AND lncondipagcyv=0 AND lnEntSalcyv<>0)		&&& caja y bancos
 		****** iniciando la actualizacion de cyvstencias en el catalogo y en las egas
 		IF SEEK(lnIdcyvIns,"tacajban")
 			lccodcyvIns=ALLTRIM(tacajban.codcajban)
@@ -3382,9 +3380,7 @@ PROCEDURE _Updatekardexcliprocajban
 		IF llTaCAJBANInsAbierta
 			USE pcsysdir+pcDB+"\cybcajabancos" IN 0 SHARED AGAIN ALIAS tacajban ORDER idcajban
 		ENDIF 
-		* Un control cero conserva el documento, pero no afecta caja/banco ni valida _TALLY.
-		IF lnEntSalcyv<>0 AND ;
-			(lcorigenpagcyv='CYB' OR (lcorigenpagcyv<>'CYB' AND lncondipagcyv=0))			&&&& caja y bancos
+		IF lcorigenpagcyv='CYB' OR (lcorigenpagcyv<>'CYB' AND lncondipagcyv=0 AND lnEntSalcyv<>0)			&&&& caja y bancos
 		****** iniciando la actualizacion de cyvstencias en el catalogo y en las egas
 			IF SEEK(lnIdcyvEdit,"tacajban")
 				lccodcyvEdit=ALLTRIM(tacajban.codcajban)
@@ -3779,7 +3775,7 @@ PROCEDURE _Updatekardexaplicxcp
 			IF 	llokcybEdit		&&& si todo bien continuamos
 				***********************************
 				***** actualizando caja y bancos
-				REPLACE takardoc.cargoabono WITH IIF(takardoc.ctrolcxcp=1,-1*((takardoc.cargoabono*-1)-lnTotalDoctapliInsOld+lnTotalDoctapliIns),IIF(takardoc.ctrolcxcp=2,(takardoc.cargoabono*-1)-lnTotalDoctapliInsOld+lnTotalDoctapliIns,takardoc.cargoabono)) NEXT 1 IN takardoc
+				REPLACE takardoc.cargoabono WITH IIF(takardoc.ctrolcxcp=1,-1,1)*((takardoc.cargoabono*-1)-lnTotalDoctapliInsOld+lnTotalDoctapliIns) NEXT 1 IN takardoc
 
 				IF _tallY=0 AND lnEntSalcyb<>3
 					lcidMenscybEdit="No fue posible Actualizar El Saldo del Registro  "+lccodcybEdit
@@ -3885,7 +3881,7 @@ PROCEDURE _insertcomprasdeta
 
             IF ldidtipComDIns <> 0
                 TRY
-                    lninsertado = 0
+                    lnregistrostotal = RECCOUNT('takarIns')
                     lcversiesta = cyvcomprasdeta.iddoctod
                     lcmitmpllalias = ALIAS()
 
@@ -3919,7 +3915,7 @@ PROCEDURE _insertcomprasdeta
                                     cyvcomprasdeta.fecalta,cyvcomprasdeta.fecmod,cyvcomprasdeta.fecactu,;
                                     cyvcomprasdeta.nodo,cyvcomprasdeta.iduser,cyvcomprasdeta.pcuser)
 
-                        lninsertado = _TALLY
+                        lninsertado = RECCOUNT('takarIns') - lnregistrostotal
                     ELSE
                         UPDATE takarIns SET iddocto = cyvcomprasdeta.iddocto,;
                                             idtipodocto = ldidtipComDIns,;
@@ -4280,8 +4276,7 @@ PROCEDURE _comprascreditocontado
 			ENDIF 
 
 			***** KARDEX DE Cuentas por Cobrar o Pagar		jrjrjr
-			* Todo documento confirmado conserva su espejo; los controles cero no afectan saldos.
-			IF .T.
+			IF cyvcompras.ctrolcxp<>0 OR cyvcompras.ctrolcyb<>0 AND cyvcompras.noContabilizable=0
 				lniddocCOMIns=iddocto
 				lnidTipDocCOMIns=idtipodocto
 				IF SEEK(lnidTipDocCOMIns,'sistipodoctos','idtipodoct')
@@ -4333,6 +4328,7 @@ PROCEDURE _comprascreditocontado
 										WHERE iddocto=lniddocCOMIns
 						lnregistrosprocesados=	_tally
 					ELSE
+						lncantidadregistros=RECCOUNT('takardoc')
 						INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
 												numero,fechadocto,fechavenci,idclipro,idagente,totaldocto,condipago,;
 												rentadocto,rentaabono,cargoabono,conreferencia,idseriechq,numerochq,nomcheque,;
@@ -4349,7 +4345,7 @@ PROCEDURE _comprascreditocontado
 										cyvcompras.fecactu,cyvcompras.nodo,cyvcompras.iduser,cyvcompras.pcuser,;
 										cyvcompras.codigoGeneracion,cyvcompras.selloRecepcion,cyvcompras.numeroControl,;
 										cyvcompras.presupuesto,cyvcompras.ciclo,cyvcompras.noContabilizable)
-						lnregistrosprocesados=_TALLY
+						lnregistrosprocesados=RECCOUNT('takardoc')-lncantidadregistros
 					ENDIF 
 					IF lnregistrosprocesados=0
 						lcidMensComIns="Error al Insertar Movimientos de Credito o Contado en Compras "
@@ -4511,7 +4507,7 @@ ELSE
 			ENDIF 
 			IF ldidtipComDIns<>0
 				TRY 
-					lninsertado=0
+					lnregistrostotal=RECCOUNT('takarIns')
 					lcversiesta=cyvventasdeta.iddoctod
 					lcmitmpllalias=ALIAS()
 					SELECT takarIns
@@ -4549,7 +4545,7 @@ ELSE
 										lcnotasComDins,cyvventasdeta.status,cyvventasdeta.eliminado,;
 										cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
 										cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
-						lninsertado = _TALLY
+						lninsertado = RECCOUNT('takarIns')-lnregistrostotal
 										
 					ELSE
 						UPDATE takarIns SET iddocto=cyvventasdeta.iddocto,;
@@ -4608,7 +4604,7 @@ ELSE
 											iduser=cyvventasdeta.iduser,;
 											pcuser=cyvventasdeta.pcuser ;
 										WHERE iddoctod=cyvventasdeta.iddoctod
-						lninsertado=_TALLY
+						lninsertado=1
 					ENDIF 					
 					**** posteando pedidos
 					IF lninsertado<>0
@@ -4752,7 +4748,7 @@ ELSE
 			IF ldidtipComDEdi<>0
 				TRY 
 					IF (CURVAL("status")=-1 AND status<>-1)
-						lninsertado=0
+						lnregistrostotal=RECCOUNT('takarEdi')
 					
 						INSERT INTO takarEdi (iddoctod,iddocto,idtipodocto,idserie,idcajban,idisla,numero,horadocto,fechadocto,idclipro,totaldocto,;
 												idproducto,unimed,cantidad,idproductoUniMed,cantiunimed,factor,largo,ancho,area,desperdicio,;
@@ -4777,7 +4773,7 @@ ELSE
 									lcnotasComEdi,cyvventasdeta.status,cyvventasdeta.eliminado,;
 									cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
 									cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
-						lninsertado=_TALLY
+						lninsertado=RECCOUNT('takarEdi')-lnregistrostotal
 						
 					ELSE 
 						lninsertado = 0
@@ -4869,7 +4865,7 @@ ELSE
 						                cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
 						                cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
 
-						    lninsertado = _TALLY
+						    lninsertado = 1
 						ENDIF
 					ENDIF 
 					**** posteando pedidos
@@ -4974,8 +4970,7 @@ ELSE
 			ENDIF 
 
 			***** KARDEX DE Cuentas por Cobrar o Pagar
-			* Todo documento confirmado conserva su espejo; los controles cero no afectan saldos.
-			IF .T.
+			IF cyvventas.ctrolcxc<>0 OR cyvventas.ctrolcyb<>0 AND cyvventas.noContabilizable=0
 				lniddocCOMIns=iddocto
 				lnidTipDocCOMIns=idtipodocto
 				IF SEEK(lnidTipDocCOMIns,'sistipodoctos','idtipodoct')
@@ -5031,9 +5026,13 @@ ELSE
 										noContabilizable=cyvventas.noContabilizable,;
 										pcuser=cyvventas.pcuser ; 
 										WHERE iddocto=lniddocCOMIns
-						lncuentacambio=_TALLY
+						lncuentacambio=_tally 
+						IF lncuentacambio=0
+							lncuentacambio=1
+						ENDIF 
 
 					ELSE
+						lncuentacambio=RECCOUNT("takardoc")
 						INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
 												idisla,numero,numerofin,idseriefu,numerofu,turno,fechadocto,fechavenci,idclipro,;
 												idagente,totaldocto,condipago,rentadocto,rentaabono,cargoabono,conreferencia,;
@@ -5052,7 +5051,7 @@ ELSE
 										cyvventas.codigoGeneracion,cyvventas.selloRecepcion,cyvventas.numeroControl,;
 										cyvventas.presupuesto,cyvventas.recintofiscal,cyvventas.incoterms,;
 										cyvventas.noContabilizable,cyvventas.ciclo &lcGuardarMotivo3)
-						lncuentacambio=_TALLY
+						lncuentacambio=RECCOUNT("takardoc")-lncuentacambio
 					ENDIF 
 					IF lncuentacambio=0
 						lcidMensComIns="Error al Insertar Movimientos de Credito o Contado en ventas "
@@ -5171,8 +5170,7 @@ PROCEDURE _movimientosbancarios
 		ENDIF 
 
 		***** KARDEX DE Cuentas por Cobrar o Pagar
-		* Todo documento confirmado conserva su espejo; los controles cero no afectan saldos.
-		IF .T.
+		IF cybmovimientos.ctrolcxcp<>0 OR cybmovimientos.ctrolcyb<>0
 			lniddocCOMIns=iddocto
 			lnidTipDocCOMIns=idtipodocto
 			IF SEEK(lnidTipDocCOMIns,'sistipodoctos','idtipodoct')
@@ -5220,6 +5218,7 @@ PROCEDURE _movimientosbancarios
 									WHERE iddocto=lniddocCOMIns
 					lncuentareg=_tally
 				ELSE
+					lncuentaold=RECCOUNT('takardoc')
 					INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
 											numero,fechadocto,fechavenci,idclipro,idagente,totaldocto,totaldoctotras,condipago,;
 											rentadocto,rentaabono,cargoabono,conreferencia,idseriechq,numerochq,nomcheque,;
@@ -5233,7 +5232,7 @@ PROCEDURE _movimientosbancarios
 									cybmovimientos.periodo,cybmovimientos.origen,cybmovimientos.ctrolcxcp,cybmovimientos.ctrolcyb,;
 									cybmovimientos.status,cybmovimientos.eliminado,cybmovimientos.fecalta,cybmovimientos.fecmod,;
 									cybmovimientos.fecactu,cybmovimientos.nodo,cybmovimientos.iduser,cybmovimientos.pcuser,cybmovimientos.presupuesto,cybmovimientos.ciclo)
-					lncuentareg=_TALLY
+					lncuentareg=RECCOUNT('takardoc')-lncuentaold
 				ENDIF 
 				IF lncuentareg=0
 					lcidMensComIns="Error al Insertar Movimientos Bancarios"
@@ -5301,8 +5300,7 @@ PROCEDURE _cuentascobrarpagar
 		ENDIF 
 
 		***** KARDEX DE Cuentas por Cobrar o Pagar
-		* Todo documento confirmado conserva su espejo; los controles cero no afectan saldos.
-		IF .T.
+		IF cyvcuentasxcp.ctrolcxcp<>0
 			lniddocCOMIns=iddocto
 			lnidTipDocCOMIns=idtipodocto
 			IF SEEK(lnidTipDocCOMIns,'sistipodoctos','idtipodoct')
@@ -5341,6 +5339,7 @@ PROCEDURE _cuentascobrarpagar
 									WHERE iddocto=lniddocCOMIns
 					lncuentacambios=_tally
 				ELSE
+					lntotalregistros=RECCOUNT('takardoc')
 					INSERT INTO takardoc (iddocto,idtipodocto,idserie,idsucursal,idctrocosto,;
 											numero,fechadocto,fechavenci,idclipro,idagente,totaldocto,condipago,;
 											rentadocto,rentaabono,cargoabono,conreferencia,;
@@ -5353,7 +5352,7 @@ PROCEDURE _cuentascobrarpagar
 									cyvcuentasxcp.turno,cyvcuentasxcp.periodo,cyvcuentasxcp.origen,;
 									cyvcuentasxcp.ctrolcxcp,cyvcuentasxcp.status,cyvcuentasxcp.eliminado,cyvcuentasxcp.fecalta,;
 									cyvcuentasxcp.fecmod,cyvcuentasxcp.fecactu,cyvcuentasxcp.nodo,cyvcuentasxcp.iduser,cyvcuentasxcp.pcuser)
-					lncuentacambios=_TALLY
+					lncuentacambios=RECCOUNT('takardoc')-lntotalregistros
 				ENDIF 
 				IF lncuentacambios=0
 				
@@ -5473,7 +5472,7 @@ PROCEDURE _insertinventariosdeta
 								invinventariosdeta.entsal,lcnotasInvdIns,invinventariosdeta.status,lnIdIslaInvdIns,invinventariosdeta.eliminado,;
 								invinventariosdeta.fecalta,invinventariosdeta.fecmod,invinventariosdeta.fecactu,;
 								invinventariosdeta.nodo,invinventariosdeta.iduser,invinventariosdeta.pcuser)
-					lncuentacambios = _TALLY
+					lncuentacambios = 1
 				ELSE
 					UPDATE takarIns SET iddocto=invinventariosdeta.iddocto,;
 										idtipodocto=ldidtipInvDIns,;
@@ -5643,7 +5642,7 @@ PROCEDURE _updateinventariosdeta
 								invinventariosdeta.entsal,lcnotasInvdEdi,invinventariosdeta.status,lnIdIslaInvdEdi,invinventariosdeta.eliminado,;
 								invinventariosdeta.fecalta,invinventariosdeta.fecmod,invinventariosdeta.fecactu,;
 								invinventariosdeta.nodo,invinventariosdeta.iduser,invinventariosdeta.pcuser)
-					lncuentacambios = _TALLY
+					lncuentacambios = 1
 				ELSE
 					UPDATE takarEdi SET iddocto=invinventariosdeta.iddocto,;
 										idtipodocto=ldidtipInvDEdi,;
@@ -10439,7 +10438,7 @@ FUNCTION _recalcularSaldosCXC()
 		REPLACE cargoabono WITH NVL(apli.cargoabono,0) all
 		SET RELATION to
 		
-		SELECT idclipro,SUM(IIF(ctrolcxcp=1,totaldocto-rentadocto+cargoabono,IIF(ctrolcxcp=2,(totaldocto-rentadocto)*-1+cargoabono,0))) as saldo ;
+		SELECT idclipro,SUM(IIF(ctrolcxcp=1,totaldocto-rentadocto,(totaldocto-rentadocto)*-1)+cargoabono) as saldo ;
 				FROM skdoc WHERE status=1 AND eliminado=0 AND condipago=1 AND ctrolcxcp<>0 ;
 				ORDER BY idclipro GROUP BY idclipro INTO CURSOR c_sksal READWRITE 
 		sele c_sksal
@@ -10483,7 +10482,7 @@ FUNCTION _recalcularSaldosBancos()
 	usE pcsysdir+pcDB+"\cybmovimientos" IN 0 SHARED AGAIN
 
 
-	SELECT idcajban,SUM(valor) as valor from (select IIF(t0.ctrolCyB=1,t0.totaldocto-t0.rentadocto,IIF(INLIST(t0.ctrolCyB,2,3),(t0.totaldocto-t0.rentadocto)*-1,0)) as valor,t0.idcajban ;
+	SELECT idcajban,SUM(valor) as valor from (select IIF(t0.ctrolCyB=1,t0.totaldocto-t0.rentadocto,(t0.totaldocto-t0.rentadocto)*-1) as valor,t0.idcajban ;
 		from siskardexdoc t0 ;
 			inner join sistipodoctos t3 on t0.idtipodocto=t3.idtipodocto ;
 			inner join cybcajabancos t4 on t0.idcajban=t4.idcajban ;
@@ -17659,20 +17658,12 @@ ENDPROC
 
 FUNCTION ConfirmarCabeceraAnulacionVenta
 	LPARAMETERS tnIdDocto, tnMotivo
-	LOCAL lnAreaAnterior, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
+	LOCAL lnAreaAnterior, llConfirmada, loError
 	lnAreaAnterior=SELECT()
 	llConfirmada=.F.
-	llAbrioVenta=!USED("cyvventas")
-	llPermiteNegativosAnterior=.F.
-	IF TYPE("plconExistenciasNegativas")="L"
-		llPermiteNegativosAnterior=plconExistenciasNegativas
-	ENDIF
-	plconExistenciasNegativas=.T.
 	TRY
-		IF llAbrioVenta
-			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
-		ENDIF
-		SELECT cyvventas
+		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaGeneral
+		SELECT cIncVentaGeneral
 		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
 		IF FOUND()
 			IF status=0
@@ -17680,8 +17671,8 @@ FUNCTION ConfirmarCabeceraAnulacionVenta
 			ELSE
 				IF RLOCK()
 					REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
-					UNLOCK IN cyvventas
-					FLUSH IN cyvventas
+					UNLOCK IN cIncVentaGeneral
+					FLUSH IN cIncVentaGeneral
 					llConfirmada=.T.
 				ENDIF
 			ENDIF
@@ -17689,13 +17680,10 @@ FUNCTION ConfirmarCabeceraAnulacionVenta
 	CATCH TO loError
 		llConfirmada=.F.
 	FINALLY
-		IF USED("cyvventas")
-			UNLOCK IN cyvventas
-			IF llAbrioVenta
-				USE IN cyvventas
-			ENDIF
+		IF USED("cIncVentaGeneral")
+			UNLOCK IN cIncVentaGeneral
+			USE IN cIncVentaGeneral
 		ENDIF
-		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF
@@ -17706,20 +17694,12 @@ ENDFUNC
 
 FUNCTION ConfirmarCabeceraEliminacionVenta
 	LPARAMETERS tnIdDocto
-	LOCAL lnAreaAnterior, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
+	LOCAL lnAreaAnterior, llConfirmada, loError
 	lnAreaAnterior=SELECT()
 	llConfirmada=.F.
-	llAbrioVenta=!USED("cyvventas")
-	llPermiteNegativosAnterior=.F.
-	IF TYPE("plconExistenciasNegativas")="L"
-		llPermiteNegativosAnterior=plconExistenciasNegativas
-	ENDIF
-	plconExistenciasNegativas=.T.
 	TRY
-		IF llAbrioVenta
-			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
-		ENDIF
-		SELECT cyvventas
+		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaEliminar
+		SELECT cIncVentaEliminar
 		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA"
 		IF FOUND()
 			IF eliminado=1 AND status=0
@@ -17727,8 +17707,8 @@ FUNCTION ConfirmarCabeceraEliminacionVenta
 			ELSE
 				IF RLOCK()
 					REPLACE status WITH 0, eliminado WITH 1, fecmod WITH DATETIME()
-					UNLOCK IN cyvventas
-					FLUSH IN cyvventas
+					UNLOCK IN cIncVentaEliminar
+					FLUSH IN cIncVentaEliminar
 					llConfirmada=.T.
 				ENDIF
 			ENDIF
@@ -17736,13 +17716,10 @@ FUNCTION ConfirmarCabeceraEliminacionVenta
 	CATCH TO loError
 		llConfirmada=.F.
 	FINALLY
-		IF USED("cyvventas")
-			UNLOCK IN cyvventas
-			IF llAbrioVenta
-				USE IN cyvventas
-			ENDIF
+		IF USED("cIncVentaEliminar")
+			UNLOCK IN cIncVentaEliminar
+			USE IN cIncVentaEliminar
 		ENDIF
-		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF
@@ -17752,16 +17729,10 @@ ENDFUNC
 
 FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 	LPARAMETERS tnIdDocto, tnMotivo
-	LOCAL lnAreaAnterior, llAceptada, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
+	LOCAL lnAreaAnterior, llAceptada, llConfirmada, loError
 	lnAreaAnterior = SELECT()
 	llAceptada = .F.
 	llConfirmada = .F.
-	llAbrioVenta = !USED("cyvventas")
-	llPermiteNegativosAnterior=.F.
-	IF TYPE("plconExistenciasNegativas")="L"
-		llPermiteNegativosAnterior=plconExistenciasNegativas
-	ENDIF
-	plconExistenciasNegativas=.T.
 	TRY
 		USE (pcSysDir+pcDB+"\sisDTE") SHARED AGAIN IN 0 ALIAS cIncFiscalDte
 		SELECT cIncFiscalDte
@@ -17769,10 +17740,8 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 		llAceptada = FOUND()
 		USE IN cIncFiscalDte
 		IF llAceptada
-			IF llAbrioVenta
-				USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
-			ENDIF
-			SELECT cyvventas
+			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncFiscalVenta
+			SELECT cIncFiscalVenta
 			LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
 			IF FOUND()
 				IF status=0
@@ -17780,15 +17749,13 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 				ELSE
 					IF RLOCK()
 						REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
-						UNLOCK IN cyvventas
-						FLUSH IN cyvventas
+						UNLOCK IN cIncFiscalVenta
+						FLUSH IN cIncFiscalVenta
 						llConfirmada=.T.
 					ENDIF
 				ENDIF
 			ENDIF
-			IF llAbrioVenta AND USED("cyvventas")
-				USE IN cyvventas
-			ENDIF
+			USE IN cIncFiscalVenta
 		ENDIF
 	CATCH TO loError
 		llConfirmada=.F.
@@ -17796,13 +17763,10 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 		IF USED("cIncFiscalDte")
 			USE IN cIncFiscalDte
 		ENDIF
-		IF USED("cyvventas")
-			UNLOCK IN cyvventas
-			IF llAbrioVenta AND USED("cyvventas")
-				USE IN cyvventas
-			ENDIF
+		IF USED("cIncFiscalVenta")
+			UNLOCK IN cIncFiscalVenta
+			USE IN cIncFiscalVenta
 		ENDIF
-		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF
