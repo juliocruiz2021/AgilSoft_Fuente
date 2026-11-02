@@ -14992,38 +14992,186 @@ ENDFUNC
 
 
 FUNCTION ValidarPedidosComprasyVentas()
-	IF pntipoconeccion=1
-		lcaliasvalida=ALIAS()
-		USE pcSysDir+pcdb+"\cyvventasdeta" again IN 0
-		SELECT cyvventasdeta
-		llexiste=.f.
-		FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
-		   IF ALLTRIM(FIELD(gnCount))=="IDPEDIDOD"  && Display each field
-				llexiste=.T.
-		   ENDIF 
-		NEXT
-		USE IN cyvventasdeta
-		
-		IF !llexiste
-			USE pcSysDir+pcdb+"\cyvventasdeta" EXCLUSIVE IN 0
-			ALTER table cyvventasdeta ADD COLUMN idpedidod I
-			USE IN cyvventasdeta
-			
-			USE pcSysDir+pcdb+"\cyvcomprasdeta" EXCLUSIVE IN 0
-			ALTER table cyvcomprasdeta ADD COLUMN idpedidod I
-			USE IN cyvcomprasdeta
-			
-			USE pcSysDir+pcdb+"\siskardex" EXCLUSIVE IN 0
-			ALTER table siskardex ADD COLUMN cantidadpedido N(18,8)
-			USE IN siskardex
-			
-		ENDIF 
-		
-		IF !EMPTY(lcaliasvalida)
-			SELECT (lcaliasvalida)
-		ENDIF 
-	ENDIF 
-	RETURN .t.
+	LOCAL lcAliasValida, lcRutaBase, lcRutaVentasDeta, lcRutaComprasDeta, lcRutaKardex, ;
+		lcRutaRespaldos, lcRutaRespaldo, lcArchivoOrigen, lcArchivoDestino, ;
+		llFaltaPedidoVenta, llFaltaPedidoCompra, llFaltaCantidadPedido, ;
+		llResultado, llEncontrado, lnCampo, lnCampos, lnArchivo, loError
+	LOCAL ARRAY laCampos[1], laArchivos[9]
+
+	IF pntipoconeccion<>1
+		RETURN .t.
+	ENDIF
+
+	lcAliasValida=ALIAS()
+	lcRutaBase=ADDBS(pcSysDir+pcdb)
+	lcRutaVentasDeta=lcRutaBase+"cyvventasdeta"
+	lcRutaComprasDeta=lcRutaBase+"cyvcomprasdeta"
+	lcRutaKardex=lcRutaBase+"siskardex"
+	STORE .f. TO llFaltaPedidoVenta,llFaltaPedidoCompra,llFaltaCantidadPedido
+	llResultado=.t.
+
+	TRY
+		* Cada campo se valida por separado. Un tenant puede tener una parte de
+		* la migracion y no las otras dos.
+		USE (lcRutaVentasDeta) SHARED AGAIN IN 0 ALIAS cValPedVtaD
+		lnCampos=AFIELDS(laCampos,"cValPedVtaD")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="IDPEDIDOD"
+				llEncontrado=.t.
+				IF UPPER(laCampos[lnCampo,2])<>"I"
+					ERROR "cyvventasdeta.idpedidod existe con un tipo incompatible."
+				ENDIF
+				EXIT
+			ENDIF
+		ENDFOR
+		llFaltaPedidoVenta=!llEncontrado
+		USE IN cValPedVtaD
+
+		USE (lcRutaComprasDeta) SHARED AGAIN IN 0 ALIAS cValPedCmpD
+		lnCampos=AFIELDS(laCampos,"cValPedCmpD")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="IDPEDIDOD"
+				llEncontrado=.t.
+				IF UPPER(laCampos[lnCampo,2])<>"I"
+					ERROR "cyvcomprasdeta.idpedidod existe con un tipo incompatible."
+				ENDIF
+				EXIT
+			ENDIF
+		ENDFOR
+		llFaltaPedidoCompra=!llEncontrado
+		USE IN cValPedCmpD
+
+		USE (lcRutaKardex) SHARED AGAIN IN 0 ALIAS cValPedKar
+		lnCampos=AFIELDS(laCampos,"cValPedKar")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="CANTIDADPEDIDO"
+				llEncontrado=.t.
+				IF UPPER(laCampos[lnCampo,2])<>"N" OR ;
+						laCampos[lnCampo,3]<>18 OR laCampos[lnCampo,4]<>8
+					ERROR "siskardex.cantidadpedido existe con un tipo incompatible."
+				ENDIF
+				EXIT
+			ENDIF
+		ENDFOR
+		llFaltaCantidadPedido=!llEncontrado
+		USE IN cValPedKar
+
+		IF llFaltaPedidoVenta OR llFaltaPedidoCompra OR llFaltaCantidadPedido
+			* Respaldo persistente previo de las tablas fisicas afectadas. El DBC
+			* permanece abierto por el login y forma parte del respaldo del tenant.
+			lcRutaRespaldos=lcRutaBase+"respaldos_codex"
+			IF !DIRECTORY(lcRutaRespaldos)
+				MD (lcRutaRespaldos)
+			ENDIF
+			lcRutaRespaldo=ADDBS(lcRutaRespaldos)+"pedidos_estructura_"+;
+				STRTRAN(STRTRAN(STRTRAN(TTOC(DATETIME(),1),"-",""),":",""),"T","")+"_"+SYS(2015)
+			MD (lcRutaRespaldo)
+			lcRutaRespaldo=ADDBS(lcRutaRespaldo)
+			laArchivos[1]="cyvventasdeta.dbf"
+			laArchivos[2]="cyvventasdeta.cdx"
+			laArchivos[3]="cyvventasdeta.fpt"
+			laArchivos[4]="cyvcomprasdeta.dbf"
+			laArchivos[5]="cyvcomprasdeta.cdx"
+			laArchivos[6]="cyvcomprasdeta.fpt"
+			laArchivos[7]="siskardex.dbf"
+			laArchivos[8]="siskardex.cdx"
+			laArchivos[9]="siskardex.fpt"
+			FOR lnArchivo=1 TO ALEN(laArchivos)
+				lcArchivoOrigen=lcRutaBase+laArchivos[lnArchivo]
+				IF FILE(lcArchivoOrigen)
+					lcArchivoDestino=lcRutaRespaldo+laArchivos[lnArchivo]
+					COPY FILE (lcArchivoOrigen) TO (lcArchivoDestino)
+					IF !FILE(lcArchivoDestino)
+						ERROR "No se pudo respaldar "+laArchivos[lnArchivo]+"."
+					ENDIF
+				ENDIF
+			ENDFOR
+		ENDIF
+
+		IF llFaltaPedidoVenta
+			USE (lcRutaVentasDeta) EXCLUSIVE AGAIN IN 0 ALIAS cValPedVtaD
+			ALTER TABLE (lcRutaVentasDeta) ADD COLUMN idpedidod I DEFAULT 0
+			USE IN cValPedVtaD
+		ENDIF
+
+		IF llFaltaPedidoCompra
+			USE (lcRutaComprasDeta) EXCLUSIVE AGAIN IN 0 ALIAS cValPedCmpD
+			ALTER TABLE (lcRutaComprasDeta) ADD COLUMN idpedidod I DEFAULT 0
+			USE IN cValPedCmpD
+		ENDIF
+
+		IF llFaltaCantidadPedido
+			USE (lcRutaKardex) EXCLUSIVE AGAIN IN 0 ALIAS cValPedKar
+			ALTER TABLE (lcRutaKardex) ADD COLUMN cantidadpedido N(18,8) DEFAULT 0
+			USE IN cValPedKar
+		ENDIF
+
+		* Postvalidacion: las tres columnas deben existir y conservar el tipo exacto.
+		USE (lcRutaVentasDeta) SHARED AGAIN IN 0 ALIAS cValPedVtaD
+		lnCampos=AFIELDS(laCampos,"cValPedVtaD")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="IDPEDIDOD" AND ;
+					UPPER(laCampos[lnCampo,2])=="I"
+				llEncontrado=.t.
+				EXIT
+			ENDIF
+		ENDFOR
+		IF !llEncontrado
+			ERROR "No se confirmo cyvventasdeta.idpedidod."
+		ENDIF
+		USE IN cValPedVtaD
+		USE (lcRutaComprasDeta) SHARED AGAIN IN 0 ALIAS cValPedCmpD
+		lnCampos=AFIELDS(laCampos,"cValPedCmpD")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="IDPEDIDOD" AND ;
+					UPPER(laCampos[lnCampo,2])=="I"
+				llEncontrado=.t.
+				EXIT
+			ENDIF
+		ENDFOR
+		IF !llEncontrado
+			ERROR "No se confirmo cyvcomprasdeta.idpedidod."
+		ENDIF
+		USE IN cValPedCmpD
+		USE (lcRutaKardex) SHARED AGAIN IN 0 ALIAS cValPedKar
+		lnCampos=AFIELDS(laCampos,"cValPedKar")
+		llEncontrado=.f.
+		FOR lnCampo=1 TO lnCampos
+			IF UPPER(ALLTRIM(laCampos[lnCampo,1]))=="CANTIDADPEDIDO" AND ;
+					UPPER(laCampos[lnCampo,2])=="N" AND ;
+					laCampos[lnCampo,3]=18 AND laCampos[lnCampo,4]=8
+				llEncontrado=.t.
+				EXIT
+			ENDIF
+		ENDFOR
+		IF !llEncontrado
+			ERROR "No se confirmo siskardex.cantidadpedido N(18,8)."
+		ENDIF
+		USE IN cValPedKar
+	CATCH TO loError
+		llResultado=.f.
+		WAIT WINDOW "No fue posible completar la estructura de pedidos: "+loError.Message TIMEOUT 3
+	FINALLY
+		IF USED("cValPedVtaD")
+			USE IN cValPedVtaD
+		ENDIF
+		IF USED("cValPedCmpD")
+			USE IN cValPedCmpD
+		ENDIF
+		IF USED("cValPedKar")
+			USE IN cValPedKar
+		ENDIF
+		IF !EMPTY(lcAliasValida) AND USED(lcAliasValida)
+			SELECT (lcAliasValida)
+		ENDIF
+	ENDTRY
+
+	RETURN llResultado
 ENDFUNC 
 
 

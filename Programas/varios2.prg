@@ -16919,7 +16919,7 @@ FUNCTION _ValidarKardexDocDBC
 	LOCAL llTriggerInsert, llTriggerUpdate, llResultado, llCorregido
 	LOCAL llCambioInsert, llCambioUpdate, llRestaurado, llPuedeCorregir
 	LOCAL llAbiertoPorRutina, loError, loErrorRestaurar
-	LOCAL llProcedimientosOk
+	LOCAL llProcedimientosOk, llTriggersVentasOk, lcDetalleTriggersVentas
 
 	IF VARTYPE(tlMostrarMensaje) <> "L"
 		tlMostrarMensaje = .T.
@@ -16991,9 +16991,12 @@ FUNCTION _ValidarKardexDocDBC
 
 				llTriggerInsert = lcTriggerInsert == UPPER(lcInsertEsperado)
 				llTriggerUpdate = lcTriggerUpdate == UPPER(lcUpdateEsperado)
+				lcDetalleTriggersVentas = ""
+				llTriggersVentasOk = _ValidarTriggersVentasApiDBC(;
+					.F., @lcDetalleTriggersVentas)
 
 				IF tlCorregir AND llPuedeCorregir AND ;
-						(!llTriggerInsert OR !llTriggerUpdate)
+						(!llTriggerInsert OR !llTriggerUpdate OR !llTriggersVentasOk)
 
 					lcRutaBase = ADDBS(JUSTPATH(lcDbcObjetivo)) + ;
 						"RespaldosEstructura"
@@ -17057,7 +17060,9 @@ FUNCTION _ValidarKardexDocDBC
 					llTriggerInsert = lcTriggerInsert == UPPER(lcInsertEsperado)
 					llTriggerUpdate = lcTriggerUpdate == UPPER(lcUpdateEsperado)
 
-					IF llTriggerInsert AND llTriggerUpdate
+					llTriggersVentasOk = _ValidarTriggersVentasApiDBC(;
+						.T., @lcDetalleTriggersVentas)
+					IF llTriggerInsert AND llTriggerUpdate AND llTriggersVentasOk
 						llCorregido = .T.
 					ELSE
 						IF llCambioInsert
@@ -17095,7 +17100,11 @@ FUNCTION _ValidarKardexDocDBC
 						"- El trigger UPDATE de siskardexdoc no coincide con DIPRO."
 				ENDIF
 
-				llResultado = llTriggerInsert AND llTriggerUpdate
+				IF !llTriggersVentasOk AND !EMPTY(lcDetalleTriggersVentas)
+					lcDetalle = lcDetalle + CHR(13) + lcDetalleTriggersVentas
+				ENDIF
+				llResultado = llTriggerInsert AND llTriggerUpdate AND ;
+					llTriggersVentasOk
 			ENDIF
 		ENDIF
 	CATCH TO loError
@@ -17142,8 +17151,8 @@ FUNCTION _ValidarKardexDocDBC
 	IF tlMostrarMensaje
 		IF llCorregido AND llResultado
 			MESSAGEBOX(;
-				"SIGA corrigio exclusivamente los triggers INSERT y UPDATE " + ;
-				"de siskardexdoc." + CHR(13) + CHR(13) + ;
+				"SIGA corrigio los triggers de ventas y kardex para " + ;
+				"compatibilidad con SIGA y la API." + CHR(13) + CHR(13) + ;
 				"Respaldo: " + lcRutaRespaldo, ;
 				64, ;
 				"Correccion de triggers SIGA", ;
@@ -17166,6 +17175,138 @@ FUNCTION _ValidarKardexDocDBC
 ENDFUNC
 
 
+********************************************************************
+* Protege los triggers que VFPOLEDB no debe ejecutar. La API define
+* pncambiandoStructura=1 y SIGA conserva su comportamiento historico.
+********************************************************************
+FUNCTION _ValidarTriggersVentasApiDBC
+	LPARAMETERS tlCorregir, tcDetalle
+	LOCAL ARRAY laTabla[6], laEvento[6], laPropiedad[6]
+	LOCAL ARRAY laRutina[6], laOriginal[6], laCambio[6]
+	LOCAL lnI, lcActual, lcEsperado, lcComando, lcDetalle
+	LOCAL llResultado, llRestaurado, loError, loErrorRestaurar
+
+	laTabla[1] = "cyvventas"
+	laEvento[1] = "INSERT"
+	laPropiedad[1] = "InsertTrigger"
+	laRutina[1] = "_ventascreditocontado()"
+	laTabla[2] = "cyvventas"
+	laEvento[2] = "UPDATE"
+	laPropiedad[2] = "UpdateTrigger"
+	laRutina[2] = "_ventascreditocontado()"
+	laTabla[3] = "cyvventasdeta"
+	laEvento[3] = "INSERT"
+	laPropiedad[3] = "InsertTrigger"
+	laRutina[3] = "_insertventasdeta()"
+	laTabla[4] = "cyvventasdeta"
+	laEvento[4] = "UPDATE"
+	laPropiedad[4] = "UpdateTrigger"
+	laRutina[4] = "_updateventasdeta()"
+	laTabla[5] = "siskardex"
+	laEvento[5] = "INSERT"
+	laPropiedad[5] = "InsertTrigger"
+	laRutina[5] = "_insertkardex()"
+	laTabla[6] = "siskardex"
+	laEvento[6] = "UPDATE"
+	laPropiedad[6] = "UpdateTrigger"
+	laRutina[6] = "_updatekardex()"
+
+	STORE "" TO lcDetalle
+	STORE .T. TO llResultado, llRestaurado
+	FOR lnI = 1 TO 6
+		laOriginal[lnI] = DBGETPROP(;
+			laTabla[lnI], "TABLE", laPropiedad[lnI])
+		laCambio[lnI] = .F.
+		lcEsperado = 'IIF(TYPE("pncambiandoStructura")="N".AND.' + ;
+			'pncambiandostructura=1,.T.,' + laRutina[lnI] + ')'
+		lcActual = _NormalizarTriggerDBC(laOriginal[lnI])
+		IF lcActual <> _NormalizarTriggerDBC(lcEsperado)
+			llResultado = .F.
+			lcDetalle = lcDetalle + CHR(13) + "- " + ;
+				UPPER(laTabla[lnI]) + " " + laEvento[lnI] + ;
+				" no tiene proteccion API."
+		ENDIF
+	ENDFOR
+
+	IF tlCorregir AND !llResultado
+		TRY
+			FOR lnI = 1 TO 6
+				lcEsperado = 'IIF(TYPE("pncambiandoStructura")="N".AND.' + ;
+					'pncambiandostructura=1,.T.,' + laRutina[lnI] + ')'
+				IF _NormalizarTriggerDBC(laOriginal[lnI]) <> ;
+						_NormalizarTriggerDBC(lcEsperado)
+					IF !EMPTY(laOriginal[lnI])
+						lcComando = "DELETE TRIGGER ON " + laTabla[lnI] + ;
+							" FOR " + laEvento[lnI]
+						&lcComando
+					ENDIF
+					laCambio[lnI] = .T.
+					lcComando = "CREATE TRIGGER ON " + laTabla[lnI] + ;
+						" FOR " + laEvento[lnI] + " AS " + lcEsperado
+					&lcComando
+				ENDIF
+			ENDFOR
+
+			llResultado = .T.
+			STORE "" TO lcDetalle
+			FOR lnI = 1 TO 6
+				lcEsperado = 'IIF(TYPE("pncambiandoStructura")="N".AND.' + ;
+					'pncambiandostructura=1,.T.,' + laRutina[lnI] + ')'
+				lcActual = DBGETPROP(;
+					laTabla[lnI], "TABLE", laPropiedad[lnI])
+				IF _NormalizarTriggerDBC(lcActual) <> ;
+						_NormalizarTriggerDBC(lcEsperado)
+					ERROR "No se verifico " + laTabla[lnI] + ;
+						" " + laEvento[lnI] + "."
+				ENDIF
+			ENDFOR
+		CATCH TO loError
+			llResultado = .F.
+			TRY
+				FOR lnI = 6 TO 1 STEP -1
+					IF laCambio[lnI]
+						IF !EMPTY(DBGETPROP(laTabla[lnI], "TABLE", ;
+								laPropiedad[lnI]))
+							lcComando = "DELETE TRIGGER ON " + laTabla[lnI] + ;
+								" FOR " + laEvento[lnI]
+							&lcComando
+						ENDIF
+						IF !EMPTY(laOriginal[lnI])
+							lcComando = "CREATE TRIGGER ON " + laTabla[lnI] + ;
+								" FOR " + laEvento[lnI] + " AS " + ;
+								laOriginal[lnI]
+							&lcComando
+						ENDIF
+					ENDIF
+				ENDFOR
+			CATCH TO loErrorRestaurar
+				llRestaurado = .F.
+			ENDTRY
+			lcDetalle = "Error " + TRANSFORM(loError.ErrorNo) + ;
+				" corrigiendo triggers de ventas: " + loError.Message
+			IF !llRestaurado
+				lcDetalle = lcDetalle + CHR(13) + ;
+					"No fue posible restaurar todos los valores originales."
+			ENDIF
+		ENDTRY
+	ENDIF
+
+	IF PCOUNT() >= 2
+		tcDetalle = lcDetalle
+	ENDIF
+	RETURN llResultado
+ENDFUNC
+
+
+FUNCTION _NormalizarTriggerDBC
+	LPARAMETERS tcTrigger
+	LOCAL lcTrigger
+	lcTrigger = UPPER(ALLTRIM(TRANSFORM(tcTrigger)))
+	lcTrigger = STRTRAN(lcTrigger, "'", '"')
+	lcTrigger = CHRTRAN(lcTrigger, ;
+		" " + CHR(9) + CHR(13) + CHR(10), "")
+	RETURN lcTrigger
+ENDFUNC
 ********************************************************************
 * Paquete canonico versionado de procedimientos almacenados SIGA.
 * La fuente vive integrada aqui; el archivo temporal no se distribuye.
