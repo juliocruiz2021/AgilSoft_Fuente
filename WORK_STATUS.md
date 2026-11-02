@@ -5,14 +5,15 @@ Rama: `feature/modulo-facturacion`
 
 ## Objetivo actual
 
-Corregir de forma permanente la anulacion de ventas y la liberacion visual de sus pedidos desde SIGA, recompilar `principal.exe` y conservar intactos los cambios locales ajenos.
+Punto estable de produccion cerrado por decision de Julio el 2026-11-02. No quedan cambios funcionales pendientes de incorporar en SIGA; cualquier trabajo posterior parte de este estado guardado y sincronizado.
 
-## Pausa para reinicio 2026-11-02
+## Cierre estable 2026-11-02
 
-- Diagnostico de compilacion 16:44: `frm_ven_ventas_mod.scx` compilo aislado `COMPILE_OK` y regenero su SCT exactamente igual al blob versionado `1cd2c49d`; respaldo previo en `respaldos_codex/diagnostico_sct_20261102-164500`. La reconstruccion integral no inicio porque `Programas/sistema.pjx` respondio `ERROR 3: El archivo ya esta en uso` en la linea 19 del finalizador; `principal.exe` no se reemplazo. Tras reiniciar, confirmar que no exista otro VFP y repetir la reconstruccion integral.
-- Ultima correccion guardada y sincronizada: commit `a3ece8f5`. En la rama nativa de anulacion, la cabecera recibe `status=0` directamente; ya no vuelve a leer `status=1` desde `c_cyvventas` con buffering. Formulario `COMPILE_OK` y contrato `VERIFY_OK`.
-- Estado real dejado intacto: FACV `00074060` y `00074061` tienen cabecera activa pero detalle inactivo; requieren reparacion controlada. FACV `00074062` sigue activa y no entro al intento. No volver a anular 74060/74061 como documentos normales.
-- Siguiente paso exacto al reiniciar: ejecutar nuevamente el proyecto SIGA, probar una sola factura activa distinta de los casos parciales y verificar cabecera/detalle/kardex. Solo despues revisar la anulacion por seleccion multiple y el refresco/recorrido del listado.
+- `frm_ven_ventas` conserva el alias explicito `c_cyvventas` y activa `pnCargaMasivaDipro` durante el procesamiento por lote para impedir que el listado se refresque mientras se anulan o procesan documentos.
+- Reconstruccion integral `BUILD EXE ... RECOMPILE` completada sin `sistema.err` ni `principal.err`.
+- `principal.exe`: 36,264,199 bytes; SHA-256 `4AF32F5AC4C36E8046143F2B3DD796FF0E6A76600654076712299A0E12397617`.
+- No se modificaron DBF/DBC, pedidos, facturas ni otros datos reales durante el cierre.
+- Directorios de empresas, respaldos, salidas y herramientas temporales permanecen fuera del commit.
 
 ## Cambios integrados
 
@@ -82,4 +83,4 @@ Corregir de forma permanente la anulacion de ventas y la liberacion visual de su
 
 ## Siguiente paso exacto
 
-Abrir el `principal.exe` nuevo y refrescar Pedidos: `00322688` y `00322689` deben volver a aparecer como pendientes. Luego hacer una prueba controlada creando y anulando una venta no DTE desde SIGA, sin que Codex anule documentos reales.
+Usar este commit como base estable de produccion. No modificar SIGA hasta que Julio abra expresamente un nuevo bloque de cambios.
