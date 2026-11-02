@@ -17658,12 +17658,20 @@ ENDPROC
 
 FUNCTION ConfirmarCabeceraAnulacionVenta
 	LPARAMETERS tnIdDocto, tnMotivo
-	LOCAL lnAreaAnterior, llConfirmada, loError
+	LOCAL lnAreaAnterior, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
 	lnAreaAnterior=SELECT()
 	llConfirmada=.F.
+	llAbrioVenta=!USED("cyvventas")
+	llPermiteNegativosAnterior=.F.
+	IF TYPE("plconExistenciasNegativas")="L"
+		llPermiteNegativosAnterior=plconExistenciasNegativas
+	ENDIF
+	plconExistenciasNegativas=.T.
 	TRY
-		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaGeneral
-		SELECT cIncVentaGeneral
+		IF llAbrioVenta
+			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
+		ENDIF
+		SELECT cyvventas
 		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
 		IF FOUND()
 			IF status=0
@@ -17671,8 +17679,8 @@ FUNCTION ConfirmarCabeceraAnulacionVenta
 			ELSE
 				IF RLOCK()
 					REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
-					UNLOCK IN cIncVentaGeneral
-					FLUSH IN cIncVentaGeneral
+					UNLOCK IN cyvventas
+					FLUSH IN cyvventas
 					llConfirmada=.T.
 				ENDIF
 			ENDIF
@@ -17680,10 +17688,13 @@ FUNCTION ConfirmarCabeceraAnulacionVenta
 	CATCH TO loError
 		llConfirmada=.F.
 	FINALLY
-		IF USED("cIncVentaGeneral")
-			UNLOCK IN cIncVentaGeneral
-			USE IN cIncVentaGeneral
+		IF USED("cyvventas")
+			UNLOCK IN cyvventas
+			IF llAbrioVenta
+				USE IN cyvventas
+			ENDIF
 		ENDIF
+		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF
@@ -17694,12 +17705,20 @@ ENDFUNC
 
 FUNCTION ConfirmarCabeceraEliminacionVenta
 	LPARAMETERS tnIdDocto
-	LOCAL lnAreaAnterior, llConfirmada, loError
+	LOCAL lnAreaAnterior, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
 	lnAreaAnterior=SELECT()
 	llConfirmada=.F.
+	llAbrioVenta=!USED("cyvventas")
+	llPermiteNegativosAnterior=.F.
+	IF TYPE("plconExistenciasNegativas")="L"
+		llPermiteNegativosAnterior=plconExistenciasNegativas
+	ENDIF
+	plconExistenciasNegativas=.T.
 	TRY
-		USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncVentaEliminar
-		SELECT cIncVentaEliminar
+		IF llAbrioVenta
+			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
+		ENDIF
+		SELECT cyvventas
 		LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA"
 		IF FOUND()
 			IF eliminado=1 AND status=0
@@ -17707,8 +17726,8 @@ FUNCTION ConfirmarCabeceraEliminacionVenta
 			ELSE
 				IF RLOCK()
 					REPLACE status WITH 0, eliminado WITH 1, fecmod WITH DATETIME()
-					UNLOCK IN cIncVentaEliminar
-					FLUSH IN cIncVentaEliminar
+					UNLOCK IN cyvventas
+					FLUSH IN cyvventas
 					llConfirmada=.T.
 				ENDIF
 			ENDIF
@@ -17716,10 +17735,13 @@ FUNCTION ConfirmarCabeceraEliminacionVenta
 	CATCH TO loError
 		llConfirmada=.F.
 	FINALLY
-		IF USED("cIncVentaEliminar")
-			UNLOCK IN cIncVentaEliminar
-			USE IN cIncVentaEliminar
+		IF USED("cyvventas")
+			UNLOCK IN cyvventas
+			IF llAbrioVenta
+				USE IN cyvventas
+			ENDIF
 		ENDIF
+		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF
@@ -17729,10 +17751,16 @@ ENDFUNC
 
 FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 	LPARAMETERS tnIdDocto, tnMotivo
-	LOCAL lnAreaAnterior, llAceptada, llConfirmada, loError
+	LOCAL lnAreaAnterior, llAceptada, llConfirmada, llAbrioVenta, llPermiteNegativosAnterior, loError
 	lnAreaAnterior = SELECT()
 	llAceptada = .F.
 	llConfirmada = .F.
+	llAbrioVenta = !USED("cyvventas")
+	llPermiteNegativosAnterior=.F.
+	IF TYPE("plconExistenciasNegativas")="L"
+		llPermiteNegativosAnterior=plconExistenciasNegativas
+	ENDIF
+	plconExistenciasNegativas=.T.
 	TRY
 		USE (pcSysDir+pcDB+"\sisDTE") SHARED AGAIN IN 0 ALIAS cIncFiscalDte
 		SELECT cIncFiscalDte
@@ -17740,8 +17768,10 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 		llAceptada = FOUND()
 		USE IN cIncFiscalDte
 		IF llAceptada
-			USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cIncFiscalVenta
-			SELECT cIncFiscalVenta
+			IF llAbrioVenta
+				USE (pcSysDir+pcDB+"\cyvventas") SHARED AGAIN IN 0 ALIAS cyvventas
+			ENDIF
+			SELECT cyvventas
 			LOCATE FOR iddocto=tnIdDocto AND UPPER(ALLTRIM(origen))=="VTA" AND eliminado=0
 			IF FOUND()
 				IF status=0
@@ -17749,13 +17779,15 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 				ELSE
 					IF RLOCK()
 						REPLACE status WITH 0, motivoanula WITH IIF(BETWEEN(tnMotivo,1,3),tnMotivo,2), fecmod WITH DATETIME()
-						UNLOCK IN cIncFiscalVenta
-						FLUSH IN cIncFiscalVenta
+						UNLOCK IN cyvventas
+						FLUSH IN cyvventas
 						llConfirmada=.T.
 					ENDIF
 				ENDIF
 			ENDIF
-			USE IN cIncFiscalVenta
+			IF llAbrioVenta AND USED("cyvventas")
+				USE IN cyvventas
+			ENDIF
 		ENDIF
 	CATCH TO loError
 		llConfirmada=.F.
@@ -17763,10 +17795,13 @@ FUNCTION ConfirmarCabeceraAnulacionFiscalVenta
 		IF USED("cIncFiscalDte")
 			USE IN cIncFiscalDte
 		ENDIF
-		IF USED("cIncFiscalVenta")
-			UNLOCK IN cIncFiscalVenta
-			USE IN cIncFiscalVenta
+		IF USED("cyvventas")
+			UNLOCK IN cyvventas
+			IF llAbrioVenta AND USED("cyvventas")
+				USE IN cyvventas
+			ENDIF
 		ENDIF
+		plconExistenciasNegativas=llPermiteNegativosAnterior
 		IF lnAreaAnterior>0
 			SELECT (lnAreaAnterior)
 		ENDIF

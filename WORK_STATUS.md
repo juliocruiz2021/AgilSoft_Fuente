@@ -5,7 +5,7 @@ Rama: `feature/modulo-facturacion`
 
 ## Objetivo actual
 
-Cerrar en la fuente oficial VFP todos los cambios terminados en los proyectos relacionados, integrar la rama compartida, recompilar `principal.exe` y dejar Git sincronizado sin perder trabajo local ni remoto.
+Corregir de forma permanente la anulacion de ventas desde SIGA, recompilar `principal.exe` y conservar intactos los cambios locales ajenos.
 
 ## Cambios integrados
 
@@ -16,6 +16,15 @@ Cerrar en la fuente oficial VFP todos los cambios terminados en los proyectos re
 - Se conservaron las mejoras de usuarios, clave y vinculos provenientes de la rama compartida.
 - `varios.prg` conserva las mejoras locales de Caja y Bancos, WhatsApp e IA, junto con las incorporaciones remotas; se retiraron tres redefiniciones duplicadas de `xlTop` que impedian compilar.
 - `varios2.prg` incorpora las rutinas remotas de anulacion, importacion y conciliacion, junto con las validaciones locales DBC, retencion de renta y procedimientos almacenados.
+
+## Correccion de anulacion de ventas SIGA
+
+- La integracion habia reemplazado el alias exacto `cyvventas` por alias alternativos dentro de `ConfirmarCabeceraAnulacionVenta`, `ConfirmarCabeceraEliminacionVenta` y `ConfirmarCabeceraAnulacionFiscalVenta`.
+- Los triggers de ventas esperan el alias exacto `cyvventas`; por eso SIGA alcanzaba a desactivar detalle y kardex, pero no confirmaba la cabecera ni mostraba un error util.
+- Se restauro el bloque ya validado del commit `b533d6d8`: usa el alias `cyvventas`, respeta si ya estaba abierto y preserva/restaura `plconExistenciasNegativas`.
+- Las facturas DIPRO FACV `00074070`/ID `112421742` y `00074071`/ID `112421768`, afectadas por el intento desde SIGA, se completaron mediante los workers oficiales de la API y pasaron el verificador integral.
+- Respaldo verificable de sus registros: `D:\Desarrollo_.net\apisigavfp\respaldos_codex\void_invoices_74070_74071_20261102-1332`.
+- FACV `00074069`/ID `112421640` tambien aparece parcialmente afectada por un intento anterior; se dejo intacta por no formar parte de la autorizacion actual.
 
 ## Correccion DBC v2
 
@@ -38,6 +47,10 @@ Cerrar en la fuente oficial VFP todos los cambios terminados en los proyectos re
 - Compilacion aislada de `varios.prg`, `varios2.prg`, login, usuarios, vinculos y ventas despues de la integracion: PASS.
 - Compilacion integral `BUILD EXE ... RECOMPILE`: PASS, 550 miembros y sin archivos `.err`.
 - `principal.exe`: 36,262,536 bytes; SHA-256 `5996FD1AC9DD0DC8949B631BD1A1D352656422ED4F490F936049E9A283E542DE`.
+- Compilacion nueva de `Programas/varios2.prg`: PASS, FXP de 637,206 bytes y sin `.err`.
+- Construccion integral nueva de `principal.exe`: PASS, 36,263,299 bytes, SHA-256 `3FA681B120DEC9C6A131CCC96BE9FDEEA6E81BB0D65316243E77DD36A375BEDE` y sin `.err`.
+- Verificacion x86 posterior: FACV `00074070` y `00074071` tienen cabecera `status=0` y cero detalles, movimientos de inventario o kardex-documento activos.
+- Respaldo previo a compilar: `.codex-work/backup_void_fix_20261102-133501`.
 
 ## Decisiones
 
@@ -47,4 +60,4 @@ Cerrar en la fuente oficial VFP todos los cambios terminados en los proyectos re
 
 ## Siguiente paso exacto
 
-Confirmar la prueba funcional en Farmacia al iniciar sesion; el login instalara el paquete DBC v2 si la empresa aun conserva una version anterior.
+Abrir el `principal.exe` nuevo, refrescar Facturacion y hacer una prueba controlada creando y anulando una venta no DTE desde SIGA; confirmar que la cabecera y sus efectos queden inactivos en una sola operacion.
