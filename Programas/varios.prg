@@ -14345,7 +14345,6 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 	WAIT WINDOW 'Procesando ....' NOWAIT 
 
 	#DEFINE xlCenter -4108
-	#DEFINE xlTop -4160
 
 	lcCurEstFin = "c_exp_prod"
 
@@ -25645,7 +25644,6 @@ FUNCTION EnviaraExcel__old_nousar(lcOpcion,lctablaxls,lnTipoOrden)
 	oExcel = CREATEOBJECT("Excel.Application")
 
 	#DEFINE xlCenter -4108
-	#DEFINE xlTop -4160
 	#DEFINE xlRight -4152
 
 	WITH oExcel
@@ -27223,7 +27221,6 @@ FUNCTION EnviaraExcel(lcOpcion,lctablaxls,lnTipoOrden)
 	oExcel = CREATEOBJECT("Excel.Application")
 
 	#DEFINE xlCenter -4108
-	#DEFINE xlTop -4160
 	#DEFINE xlRight -4152
 
 	WITH oExcel

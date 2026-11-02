@@ -17314,8 +17314,8 @@ ENDFUNC
 FUNCTION _SigaStoredProceduresFuenteCanonica
 	LOCAL lcFuente, lnParte
 	lcFuente = ""
-	lcFuente = lcFuente + _SigaStoredSourceParte01()
-	lcFuente = lcFuente + _SigaStoredSourceParte02()
+	lcFuente = lcFuente + _SigaStoredSourceParte01() + CHR(13) + CHR(10)
+	lcFuente = lcFuente + _SigaStoredSourceParte02() + CHR(13) + CHR(10)
 	lcFuente = lcFuente + _SigaStoredSourceParte03()
 	RETURN lcFuente
 ENDFUNC
@@ -18919,11 +18919,11 @@ FUNCTION _api_sigaaccountingversion
 ENDFUNC
 
 FUNCTION _siga_dbc_procedures_version
-    RETURN 1
+    RETURN 2
 ENDFUNC
 
 FUNCTION _siga_dbc_procedures_signature
-    RETURN "SIGA-DBC-SP-V1-20261101"
+    RETURN "SIGA-DBC-SP-V2-20261102"
 ENDFUNC
 ENDTEXT
 	RETURN lcParte
@@ -18931,7 +18931,7 @@ ENDFUNC
 
 ********************************************************************
 * Valida/migra el bloque completo de stored procedures del DBC.
-* Version 0 = legado; version 1 = paquete canonico SIGA/API.
+* Version 0 = legado; version 2 = paquete canonico SIGA/API corregido.
 ********************************************************************
 FUNCTION _ValidarProcedimientosAlmacenadosDBC
 	LPARAMETERS tlMostrarMensaje, tlCorregir
@@ -18951,8 +18951,8 @@ FUNCTION _ValidarProcedimientosAlmacenadosDBC
 		tlCorregir = .F.
 	ENDIF
 
-	lnVersionObjetivo = 1
-	lcFirmaEsperada = "SIGA-DBC-SP-V1-20261101"
+	lnVersionObjetivo = 2
+	lcFirmaEsperada = "SIGA-DBC-SP-V2-20261102"
 	STORE "" TO lcDbcObjetivo, lcDbcActivo, lcFirma, lcDetalle
 	STORE "" TO lcRutaRespaldo, lcTmpNuevo, lcTmpAnterior
 	STORE .F. TO llResultado, llCorregido, llAbiertoPorRutina
