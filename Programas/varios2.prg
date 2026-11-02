@@ -9989,6 +9989,7 @@ FUNCTION _creaCursorModulos()
 	INSERT INTO sismodulos VALUES (151,'Dashboar Web','080403',1)
 	INSERT INTO sismodulos VALUES (152,'Revision Global de Errores','080404',1)
 	INSERT INTO sismodulos VALUES (153,'Utiliza IA','080405',1)
+	INSERT INTO sismodulos VALUES (154,'Depurar Errores WEB','080406',1)
 
 
 **	INSERT INTO sismodulos VALUES (105,'','090400',1)
@@ -16680,3 +16681,2286 @@ PROCEDURE EliminarClaveLoginRecordadaActual
 		SELECT (lnAreaAnterior)
 	ENDIF
 ENDPROC
+
+
+
+********************************************************************
+* Garantiza la configuracion CxC usada para registrar retenciones
+* de renta. Es idempotente y conserva los IDs/configuracion existentes.
+********************************************************************
+FUNCTION _ValidarRetencionRentaCXC
+	LPARAMETERS tlMostrarMensaje, tcDetalle
+
+	LOCAL lnAreaAnterior, lnIdTipoDocto, lnIdSerie, lnIdFormato
+	LOCAL lnIdSucursal, lnIdCuenta, lnIdTipoPartida, lnIdUsuario
+	LOCAL lcNodo, lcPcUsuario, lcDetalle, llCambio, llResultado
+	LOCAL llTransaccion, loError
+
+	IF VARTYPE(tlMostrarMensaje) <> "L"
+		tlMostrarMensaje = .T.
+	ENDIF
+
+	lnAreaAnterior = SELECT()
+	STORE 0 TO lnIdTipoDocto, lnIdSerie, lnIdFormato
+	STORE 0 TO lnIdSucursal, lnIdCuenta, lnIdTipoPartida
+	lnIdUsuario = IIF(TYPE("pnIdUsuario") = "N", pnIdUsuario, 0)
+	lcNodo = IIF(TYPE("pcNodo") = "C", ALLTRIM(pcNodo), "")
+	lcPcUsuario = SYS(0)
+	STORE .F. TO llCambio, llTransaccion
+	llResultado = .F.
+	lcDetalle = ""
+
+	TRY
+		IF TYPE("pcSysDir") <> "C" OR TYPE("pcDB") <> "C" OR ;
+				EMPTY(pcSysDir) OR EMPTY(pcDB)
+			ERROR "No se encontro la empresa seleccionada."
+		ENDIF
+
+		IF USED("c_RenTipo")
+			USE IN c_RenTipo
+		ENDIF
+		IF USED("c_RenSerie")
+			USE IN c_RenSerie
+		ENDIF
+		IF USED("c_RenFormato")
+			USE IN c_RenFormato
+		ENDIF
+		IF USED("c_RenEmpresa")
+			USE IN c_RenEmpresa
+		ENDIF
+		IF USED("c_RenCata")
+			USE IN c_RenCata
+		ENDIF
+
+		USE (pcSysDir + pcDB + "\sisempresas") SHARED AGAIN IN 0 ALIAS c_RenEmpresa
+		USE (pcSysDir + pcDB + "\siscata") SHARED AGAIN IN 0 ALIAS c_RenCata
+		USE (pcSysDir + pcDB + "\sistipodoctos") SHARED AGAIN IN 0 ALIAS c_RenTipo
+		USE (pcSysDir + pcDB + "\sisseries") SHARED AGAIN IN 0 ALIAS c_RenSerie
+		USE (pcSysDir + pcDB + "\sisformatos") SHARED AGAIN IN 0 ALIAS c_RenFormato
+
+		SELECT c_RenEmpresa
+		GO TOP
+		IF TYPE("c_RenEmpresa.ctaRentaVta") <> "U"
+			lnIdCuenta = NVL(c_RenEmpresa.ctaRentaVta, 0)
+		ENDIF
+
+		SELECT c_RenCata
+		LOCATE FOR UPPER(ALLTRIM(origen)) == "TPA" AND ;
+				UPPER(ALLTRIM(cod)) == "DR" AND status = 1 AND eliminado = 0
+		IF FOUND()
+			lnIdTipoPartida = id
+		ENDIF
+		lnIdSucursal = IIF(TYPE("pnIdSucursal") = "N", pnIdSucursal, 0)
+		IF lnIdSucursal <= 0
+			LOCATE FOR UPPER(ALLTRIM(origen)) == "SUC" AND status = 1 AND eliminado = 0
+			IF FOUND()
+				lnIdSucursal = id
+			ENDIF
+		ENDIF
+		IF lnIdSucursal <= 0
+			ERROR "No existe una sucursal activa para crear el formato de retencion de renta."
+		ENDIF
+
+		BEGIN TRANSACTION
+		llTransaccion = .T.
+
+		SELECT c_RenTipo
+		LOCATE FOR INLIST(UPPER(ALLTRIM(codtipo)), "RETREN", "RET.REN", "ARETREN")
+
+		IF FOUND()
+			lnIdTipoDocto = idtipodocto
+			IF UPPER(ALLTRIM(origen)) <> "CXC" OR ctrolcxc <> 2 OR ;
+					status <> 1 OR eliminado <> 0 OR conreferencia <> 1
+				REPLACE origen WITH "CXC", ctrolcxc WITH 2, conreferencia WITH 1, ;
+					status WITH 1, eliminado WITH 0, fecmod WITH DATETIME(), ;
+					nodo WITH lcNodo, iduser WITH lnIdUsuario, pcuser WITH lcPcUsuario
+				llCambio = .T.
+			ENDIF
+			IF idctactb <= 0 AND lnIdCuenta > 0
+				REPLACE idctactb WITH lnIdCuenta, fecmod WITH DATETIME()
+				llCambio = .T.
+			ENDIF
+			IF tipoconta <> 1
+				REPLACE tipoconta WITH 1, fecmod WITH DATETIME()
+				llCambio = .T.
+			ENDIF
+			IF idtipopar <= 0 AND lnIdTipoPartida > 0
+				REPLACE idtipopar WITH lnIdTipoPartida, fecmod WITH DATETIME()
+				llCambio = .T.
+			ENDIF
+		ELSE
+			lnIdTipoDocto = _SiguienteIdTabla(lcNodo, "MAS")
+			INSERT INTO c_RenTipo ;
+				(idtipodocto, codtipo, tipodocto, clave, tipoicv, origen, ;
+				ctrolinv, ctrolcom, ctrolvta, ctrolcxc, ctrolcxp, ctrolcyb, ;
+				tipoiva, afectaprom, idctactb, tipoconta, idtipopar, ;
+				requiereautoriza, conreferencia, eliminado, status, fecalta, fecmod, ;
+				nodo, iduser, pcuser, esproduccion, notas, origencosteo, ;
+				idtipodocsie, esretaceo, docprincipal) ;
+			VALUES ;
+				(lnIdTipoDocto, "ARETREN", "Retencion Renta", "RET", 0, "CXC", ;
+				0, 0, 0, 2, 0, 0, 0, 0, lnIdCuenta, 1, lnIdTipoPartida, ;
+				0, 1, 0, 1, DATETIME(), DATETIME(), lcNodo, lnIdUsuario, ;
+				lcPcUsuario, 0, "", 0, 0, 0, 1)
+			llCambio = .T.
+		ENDIF
+
+		SELECT c_RenSerie
+		LOCATE FOR UPPER(ALLTRIM(origen)) == "CXC" AND ;
+				(INLIST(UPPER(ALLTRIM(codser)), "REN", "RENTA") OR ;
+				(ATC("RETENCION", serie) > 0 AND ATC("RENTA", serie) > 0))
+		IF FOUND()
+			lnIdSerie = idserie
+			IF status <> 1 OR eliminado <> 0
+				REPLACE status WITH 1, eliminado WITH 0, fecmod WITH DATETIME(), ;
+					nodo WITH lcNodo, iduser WITH lnIdUsuario, pcuser WITH lcPcUsuario
+				llCambio = .T.
+			ENDIF
+		ELSE
+			lnIdSerie = _SiguienteIdTabla(lcNodo, "MAS")
+			INSERT INTO c_RenSerie ;
+				(idserie, codser, serie, inicial, final, siguiente, digitos, ;
+				automatica, inicioyfin, prefijo, origen, status, eliminado, ;
+				fecalta, fecmod, nodo, iduser, pcuser, electronica) ;
+			VALUES ;
+				(lnIdSerie, "REN", "Retencion Renta", 1, 99999999, 1, 8, ;
+				1, 0, "", "CXC", 1, 0, DATETIME(), DATETIME(), lcNodo, ;
+				lnIdUsuario, lcPcUsuario, 0)
+			llCambio = .T.
+		ENDIF
+
+		SELECT c_RenFormato
+		LOCATE FOR idsucursal = lnIdSucursal AND ;
+				(INLIST(UPPER(ALLTRIM(codfor)), "RET.REN", "RETREN", "ARETREN") OR ;
+				(ATC("RETENCION", formato) > 0 AND ATC("RENTA", formato) > 0))
+		IF FOUND()
+			lnIdFormato = idformato
+			IF idtipodocto <> lnIdTipoDocto OR idserie <> lnIdSerie OR ;
+					UPPER(ALLTRIM(origen)) <> "CXC" OR status <> 1 OR eliminado <> 0
+				REPLACE idtipodocto WITH lnIdTipoDocto, idserie WITH lnIdSerie, ;
+					origen WITH "CXC", status WITH 1, eliminado WITH 0, ;
+					fecmod WITH DATETIME(), nodo WITH lcNodo, ;
+					iduser WITH lnIdUsuario, pcuser WITH lcPcUsuario
+				llCambio = .T.
+			ENDIF
+		ELSE
+			lnIdFormato = _SiguienteIdTabla(lcNodo, "MAS")
+			INSERT INTO c_RenFormato ;
+				(idformato, codfor, formato, idsucursal, idbodega, idcajban, ;
+				idtipodocto, idserie, archivo, lineas, impresor1, impresor2, ;
+				copias, idseriefu, eliminado, status, fecalta, fecmod, nodo, ;
+				iduser, nomuser, origen, tipoimpresion, pcuser, tipodetalle, ;
+				copiascontinuas, archivoctb, enviarwa, asunto, mensaje, formatopdf) ;
+			VALUES ;
+				(lnIdFormato, "RET.REN", "RETENCION RENTA", lnIdSucursal, 0, 0, ;
+				lnIdTipoDocto, lnIdSerie, "01CXCABO.FRX", 0, "", 2, 1, 0, ;
+				0, 1, DATETIME(), DATETIME(), lcNodo, lnIdUsuario, "", "CXC", ;
+				0, lcPcUsuario, 0, 0, "", 0, "", "", "")
+			llCambio = .T.
+		ENDIF
+
+		END TRANSACTION
+		llTransaccion = .F.
+		llResultado = .T.
+		lcDetalle = IIF(llCambio, ;
+			"Configuracion CxC de Retencion Renta creada o completada.", ;
+			"Configuracion CxC de Retencion Renta verificada.")
+	CATCH TO loError
+		IF llTransaccion
+			ROLLBACK
+			llTransaccion = .F.
+		ENDIF
+		lcDetalle = "No se pudo validar Retencion Renta: " + loError.Message
+		llResultado = .F.
+	FINALLY
+		IF USED("c_RenFormato")
+			USE IN c_RenFormato
+		ENDIF
+		IF USED("c_RenSerie")
+			USE IN c_RenSerie
+		ENDIF
+		IF USED("c_RenTipo")
+			USE IN c_RenTipo
+		ENDIF
+		IF USED("c_RenCata")
+			USE IN c_RenCata
+		ENDIF
+		IF USED("c_RenEmpresa")
+			USE IN c_RenEmpresa
+		ENDIF
+		IF lnAreaAnterior > 0
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	IF PCOUNT() >= 2
+		tcDetalle = lcDetalle
+	ENDIF
+	IF tlMostrarMensaje
+		WAIT WINDOW (lcDetalle) NOWAIT TIMEOUT 3
+	ENDIF
+	RETURN llResultado
+ENDFUNC
+
+
+********************************************************************
+* Valida y, opcionalmente, corrige los triggers de siskardexdoc.
+* Sin tlCorregir trabaja en solo lectura. No toca otros objetos DBC.
+********************************************************************
+FUNCTION _ValidarKardexDocDBC
+	LPARAMETERS tlMostrarMensaje, tlCorregir
+
+	LOCAL lcTriggerInsert, lcTriggerUpdate
+	LOCAL lcTriggerInsertOriginal, lcTriggerUpdateOriginal
+	LOCAL lcInsertEsperado, lcUpdateEsperado, lcDetalle
+	LOCAL lcDbcObjetivo, lcDbcActivo, lcRutaBase, lcRutaRespaldo
+	LOCAL lcArchivoOrigen, lcArchivoDestino, lcExtension, lcComando, lnExtension
+	LOCAL lcContenidoRespaldo, lnBytesRespaldo
+	LOCAL llTriggerInsert, llTriggerUpdate, llResultado, llCorregido
+	LOCAL llCambioInsert, llCambioUpdate, llRestaurado, llPuedeCorregir
+	LOCAL llAbiertoPorRutina, loError, loErrorRestaurar
+	LOCAL llProcedimientosOk
+
+	IF VARTYPE(tlMostrarMensaje) <> "L"
+		tlMostrarMensaje = .T.
+	ENDIF
+	IF VARTYPE(tlCorregir) <> "L"
+		tlCorregir = .F.
+	ENDIF
+
+	STORE .F. TO llResultado, llCorregido, llCambioInsert, llCambioUpdate
+	STORE .F. TO llPuedeCorregir, llAbiertoPorRutina
+	STORE .T. TO llRestaurado
+	STORE "" TO lcDetalle, lcDbcObjetivo, lcDbcActivo, lcRutaRespaldo
+	STORE "" TO lcTriggerInsertOriginal, lcTriggerUpdateOriginal
+
+	llProcedimientosOk = _ValidarProcedimientosAlmacenadosDBC(;
+		tlMostrarMensaje, tlCorregir)
+
+	lcInsertEsperado = ;
+		'IIF(TYPE("pncambiandoStructura")="N".AND.' + ;
+		'pncambiandostructura=1,.T.,' + ;
+		'_insertkardexcliprocajban())'
+	lcUpdateEsperado = ;
+		'IIF(TYPE("pncambiandoStructura")="N".AND.' + ;
+		'pncambiandostructura=1,.T.,' + ;
+		'_updatekardexcliprocajban())'
+
+	TRY
+		IF TYPE("pcSysDir") = "C" AND TYPE("pcDB") = "C" AND ;
+				!EMPTY(pcSysDir) AND !EMPTY(pcDB)
+			lcDbcObjetivo = FULLPATH(pcSysDir + pcDB + "\masterdb.dbc")
+		ENDIF
+
+		IF EMPTY(lcDbcObjetivo) OR !FILE(lcDbcObjetivo)
+			lcDetalle = "No se encontro el masterdb.dbc de la empresa seleccionada."
+		ELSE
+			lcDbcActivo = DBC()
+			IF EMPTY(lcDbcActivo)
+				IF tlCorregir
+					OPEN DATABASE (lcDbcObjetivo) EXCLUSIVE
+					llPuedeCorregir = .T.
+				ELSE
+					OPEN DATABASE (lcDbcObjetivo) SHARED
+				ENDIF
+				llAbiertoPorRutina = .T.
+				lcDbcActivo = DBC()
+			ELSE
+				IF tlCorregir
+					llPuedeCorregir = ;
+						UPPER(FULLPATH(lcDbcActivo)) == UPPER(lcDbcObjetivo)
+				ENDIF
+			ENDIF
+
+			IF UPPER(FULLPATH(lcDbcActivo)) <> UPPER(lcDbcObjetivo)
+				lcDetalle = "La base de datos activa no corresponde a la empresa seleccionada."
+			ELSE
+				lcTriggerInsertOriginal = DBGETPROP(;
+					"siskardexdoc", "TABLE", "InsertTrigger")
+				lcTriggerUpdateOriginal = DBGETPROP(;
+					"siskardexdoc", "TABLE", "UpdateTrigger")
+
+				lcTriggerInsert = UPPER(ALLTRIM(lcTriggerInsertOriginal))
+				lcTriggerUpdate = UPPER(ALLTRIM(lcTriggerUpdateOriginal))
+				lcTriggerInsert = STRTRAN(lcTriggerInsert, "'", '"')
+				lcTriggerInsert = CHRTRAN(lcTriggerInsert, ;
+					" " + CHR(9) + CHR(13) + CHR(10), "")
+				lcTriggerUpdate = STRTRAN(lcTriggerUpdate, "'", '"')
+				lcTriggerUpdate = CHRTRAN(lcTriggerUpdate, ;
+					" " + CHR(9) + CHR(13) + CHR(10), "")
+
+				llTriggerInsert = lcTriggerInsert == UPPER(lcInsertEsperado)
+				llTriggerUpdate = lcTriggerUpdate == UPPER(lcUpdateEsperado)
+
+				IF tlCorregir AND llPuedeCorregir AND ;
+						(!llTriggerInsert OR !llTriggerUpdate)
+
+					lcRutaBase = ADDBS(JUSTPATH(lcDbcObjetivo)) + ;
+						"RespaldosEstructura"
+					IF !DIRECTORY(lcRutaBase)
+						MD (lcRutaBase)
+					ENDIF
+					lcRutaRespaldo = ADDBS(lcRutaBase) + "KardexDoc_" + ;
+						DTOS(DATE()) + "_" + STRTRAN(TIME(), ":", "") + ;
+						"_" + SYS(2015)
+					MD (lcRutaRespaldo)
+
+					FOR lnExtension = 1 TO 3
+						lcExtension = GETWORDNUM("dbc dct dcx", lnExtension)
+						lcArchivoOrigen = FORCEEXT(lcDbcObjetivo, lcExtension)
+						IF FILE(lcArchivoOrigen)
+							lcArchivoDestino = ADDBS(lcRutaRespaldo) + ;
+								JUSTFNAME(lcArchivoOrigen)
+							lcContenidoRespaldo = FILETOSTR(lcArchivoOrigen)
+							lnBytesRespaldo = STRTOFILE(;
+								lcContenidoRespaldo, lcArchivoDestino, 0)
+							IF lnBytesRespaldo <> LEN(lcContenidoRespaldo)
+								ERROR "No fue posible completar el respaldo de " + ;
+									JUSTFNAME(lcArchivoOrigen) + "."
+							ENDIF
+						ENDIF
+					ENDFOR
+
+
+					IF DBGETPROP("siskardexdoc", "TABLE", "InsertTrigger") <> ;
+							lcTriggerInsertOriginal OR ;
+						DBGETPROP("siskardexdoc", "TABLE", "UpdateTrigger") <> ;
+							lcTriggerUpdateOriginal
+						ERROR "Los triggers cambiaron durante el respaldo; no se aplico la correccion."
+					ENDIF
+
+					IF !llTriggerInsert
+						DELETE TRIGGER ON siskardexdoc FOR INSERT
+						llCambioInsert = .T.
+						lcComando = "CREATE TRIGGER ON siskardexdoc FOR INSERT AS " + ;
+							lcInsertEsperado
+						&lcComando
+					ENDIF
+					IF !llTriggerUpdate
+						DELETE TRIGGER ON siskardexdoc FOR UPDATE
+						llCambioUpdate = .T.
+						lcComando = "CREATE TRIGGER ON siskardexdoc FOR UPDATE AS " + ;
+							lcUpdateEsperado
+						&lcComando
+					ENDIF
+
+					lcTriggerInsert = UPPER(ALLTRIM(DBGETPROP(;
+						"siskardexdoc", "TABLE", "InsertTrigger")))
+					lcTriggerUpdate = UPPER(ALLTRIM(DBGETPROP(;
+						"siskardexdoc", "TABLE", "UpdateTrigger")))
+					lcTriggerInsert = STRTRAN(lcTriggerInsert, "'", '"')
+					lcTriggerInsert = CHRTRAN(lcTriggerInsert, ;
+						" " + CHR(9) + CHR(13) + CHR(10), "")
+					lcTriggerUpdate = STRTRAN(lcTriggerUpdate, "'", '"')
+					lcTriggerUpdate = CHRTRAN(lcTriggerUpdate, ;
+						" " + CHR(9) + CHR(13) + CHR(10), "")
+					llTriggerInsert = lcTriggerInsert == UPPER(lcInsertEsperado)
+					llTriggerUpdate = lcTriggerUpdate == UPPER(lcUpdateEsperado)
+
+					IF llTriggerInsert AND llTriggerUpdate
+						llCorregido = .T.
+					ELSE
+						IF llCambioInsert
+							IF !EMPTY(DBGETPROP("siskardexdoc", "TABLE", "InsertTrigger"))
+								DELETE TRIGGER ON siskardexdoc FOR INSERT
+							ENDIF
+							IF !EMPTY(lcTriggerInsertOriginal)
+								lcComando = "CREATE TRIGGER ON siskardexdoc FOR INSERT AS " + ;
+									lcTriggerInsertOriginal
+								&lcComando
+							ENDIF
+						ENDIF
+						IF llCambioUpdate
+							IF !EMPTY(DBGETPROP("siskardexdoc", "TABLE", "UpdateTrigger"))
+								DELETE TRIGGER ON siskardexdoc FOR UPDATE
+							ENDIF
+							IF !EMPTY(lcTriggerUpdateOriginal)
+								lcComando = "CREATE TRIGGER ON siskardexdoc FOR UPDATE AS " + ;
+									lcTriggerUpdateOriginal
+								&lcComando
+							ENDIF
+						ENDIF
+						STORE .F. TO llCambioInsert, llCambioUpdate
+						lcDetalle = "La correccion no pudo verificarse y se restauraron " + ;
+							"los valores originales."
+					ENDIF
+				ENDIF
+
+				IF !llTriggerInsert
+					lcDetalle = lcDetalle + CHR(13) + ;
+						"- El trigger INSERT de siskardexdoc no coincide con DIPRO."
+				ENDIF
+				IF !llTriggerUpdate
+					lcDetalle = lcDetalle + CHR(13) + ;
+						"- El trigger UPDATE de siskardexdoc no coincide con DIPRO."
+				ENDIF
+
+				llResultado = llTriggerInsert AND llTriggerUpdate
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		llResultado = .F.
+		IF llCambioInsert OR llCambioUpdate
+			llRestaurado = .T.
+			TRY
+				IF llCambioInsert
+					IF !EMPTY(DBGETPROP("siskardexdoc", "TABLE", "InsertTrigger"))
+						DELETE TRIGGER ON siskardexdoc FOR INSERT
+					ENDIF
+					IF !EMPTY(lcTriggerInsertOriginal)
+						lcComando = "CREATE TRIGGER ON siskardexdoc FOR INSERT AS " + ;
+							lcTriggerInsertOriginal
+						&lcComando
+					ENDIF
+				ENDIF
+				IF llCambioUpdate
+					IF !EMPTY(DBGETPROP("siskardexdoc", "TABLE", "UpdateTrigger"))
+						DELETE TRIGGER ON siskardexdoc FOR UPDATE
+					ENDIF
+					IF !EMPTY(lcTriggerUpdateOriginal)
+						lcComando = "CREATE TRIGGER ON siskardexdoc FOR UPDATE AS " + ;
+							lcTriggerUpdateOriginal
+						&lcComando
+					ENDIF
+				ENDIF
+			CATCH TO loErrorRestaurar
+				llRestaurado = .F.
+			ENDTRY
+		ENDIF
+		lcDetalle = "Error " + TRANSFORM(loError.ErrorNo) + ;
+			" validando/corrigiendo triggers:" + CHR(13) + loError.Message
+		IF !llRestaurado
+			lcDetalle = lcDetalle + CHR(13) + ;
+				"No fue posible restaurar automaticamente ambos valores."
+		ENDIF
+	FINALLY
+		IF llAbiertoPorRutina
+			CLOSE DATABASES
+		ENDIF
+	ENDTRY
+
+	IF tlMostrarMensaje
+		IF llCorregido AND llResultado
+			MESSAGEBOX(;
+				"SIGA corrigio exclusivamente los triggers INSERT y UPDATE " + ;
+				"de siskardexdoc." + CHR(13) + CHR(13) + ;
+				"Respaldo: " + lcRutaRespaldo, ;
+				64, ;
+				"Correccion de triggers SIGA", ;
+				3000)
+		ELSE
+			IF !llResultado
+				MESSAGEBOX(;
+					"SIGA detecto una configuracion incompleta en " + ;
+					"siskardexdoc:" + CHR(13) + lcDetalle + CHR(13) + CHR(13) + ;
+					IIF(tlCorregir, ;
+						"No se conservaron cambios sin verificar.", ;
+						"No se realizo ningun cambio en la base de datos."), ;
+					48, ;
+					"Validacion de triggers SIGA", ;
+					3000)
+			ENDIF
+		ENDIF
+	ENDIF
+	RETURN llResultado AND llProcedimientosOk
+ENDFUNC
+
+
+********************************************************************
+* Paquete canonico versionado de procedimientos almacenados SIGA.
+* La fuente vive integrada aqui; el archivo temporal no se distribuye.
+********************************************************************
+FUNCTION _SigaStoredProceduresFuenteCanonica
+	LOCAL lcFuente, lnParte
+	lcFuente = ""
+	lcFuente = lcFuente + _SigaStoredSourceParte01()
+	lcFuente = lcFuente + _SigaStoredSourceParte02()
+	lcFuente = lcFuente + _SigaStoredSourceParte03()
+	RETURN lcFuente
+ENDFUNC
+
+FUNCTION _SigaStoredSourceParte01
+	LOCAL lcParte
+	TEXT TO lcParte NOSHOW
+* Stored procedures for SIGA ERP/API shared execution.
+* Fuente entregada por Julio el 2026-10-18; el adjunto contenia dos copias y se conserva una.
+* API mode: when llEstamosCorriendoFVP is undefined, sales/kardex procedures return .t. and SigaSalesCommandService applies the operational effects.
+
+FUNCTION _api_preparetriggerenv
+    PUBLIC pcSysDir, pcDB, pncambiandoStructura, pLRecosteando, ;
+           plconExistenciasNegativas, pcApiTriggerBasePath
+
+    LOCAL lcDbcPath, lcBasePath, lcDbFolderNoSlash
+    LOCAL llOpenedSisEmp, lcAliasSisEmp, lcTipoCampoSisEmp
+    LOCAL lcAliasAnterior
+
+    lcAliasAnterior = ALIAS()
+
+    IF TYPE('pncambiandoStructura') <> 'N'
+        pncambiandoStructura = 0
+    ENDIF
+
+    pLRecosteando = .f.
+    plconExistenciasNegativas = .f.
+
+    IF TYPE('pcSysDir') <> 'U' AND TYPE('pcDB') <> 'U' AND ;
+       !EMPTY(pcSysDir) AND !EMPTY(pcDB)
+
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+
+    ENDIF
+
+    lcDbcPath = DBC()
+    IF !EMPTY(lcDbcPath)
+        lcBasePath = lcDbcPath
+    ELSE
+        IF !EMPTY(ALIAS()) AND !EMPTY(DBF())
+            lcBasePath = DBF()
+        ELSE
+            lcBasePath = ''
+        ENDIF
+    ENDIF
+
+    IF EMPTY(lcBasePath)
+        pcSysDir = ''
+        pcDB = ''
+        pcApiTriggerBasePath = ''
+
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+
+    ENDIF
+
+    lcDbFolderNoSlash = JUSTPATH(lcBasePath)
+    IF EMPTY(lcDbFolderNoSlash)
+        pcSysDir = ''
+        pcDB = ''
+        pcApiTriggerBasePath = ''
+
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+
+    ENDIF
+
+    pcSysDir = ADDBS(JUSTPATH(lcDbFolderNoSlash))
+    pcDB = JUSTSTEM(lcDbFolderNoSlash)
+    pcApiTriggerBasePath = lcBasePath
+
+    IF EMPTY(pcSysDir) OR EMPTY(pcDB)
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+
+    ENDIF
+
+    lcAliasSisEmp = 'apiSisEmpNeg'
+    llOpenedSisEmp = !USED(lcAliasSisEmp)
+
+    TRY
+        IF llOpenedSisEmp
+            USE (pcSysDir + pcDB + "\sisempresas") IN 0 SHARED AGAIN ALIAS (lcAliasSisEmp)
+        ENDIF
+
+        IF USED(lcAliasSisEmp)
+            SELECT (lcAliasSisEmp)
+
+            LOCATE FOR idempresa = 1
+            IF !FOUND()
+                GO TOP
+            ENDIF
+
+
+            IF !EOF()
+                lcTipoCampoSisEmp = TYPE(lcAliasSisEmp + '.conExistenciasNegativas')
+
+                DO CASE
+                CASE lcTipoCampoSisEmp = 'L'
+                    plconExistenciasNegativas = ;
+                        EVALUATE(lcAliasSisEmp + '.conExistenciasNegativas')
+
+                CASE lcTipoCampoSisEmp $ 'NIYB'
+                    plconExistenciasNegativas = ;
+                        (NVL(EVALUATE(lcAliasSisEmp + '.conExistenciasNegativas'), 0) = 1)
+                ENDCASE
+            ENDIF
+        ENDIF
+    CATCH
+        plconExistenciasNegativas = .f.
+    FINALLY
+        IF llOpenedSisEmp AND USED(lcAliasSisEmp)
+            USE IN (lcAliasSisEmp)
+        ENDIF
+
+        IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+            SELECT (lcAliasAnterior)
+        ENDIF
+    ENDTRY
+ENDFUNC
+
+
+FUNCTION COMRETURNERROR
+    LPARAMETERS tcProcedure, tcMessage
+
+    PUBLIC pcApiProcError
+
+    pcApiProcError = TRANSFORM(tcProcedure) + ": " + TRANSFORM(tcMessage)
+
+    IF TYPE('llEstamosCorriendoFVP') <> 'U'
+        MESSAGEBOX(TRANSFORM(tcMessage), 16, ;
+            "Error de Integridad... (" + TRANSFORM(tcProcedure) + ")", 3000)
+    ELSE
+        =_api_logtriggererror(tcProcedure, tcMessage)
+    ENDIF
+
+ENDFUNC
+
+
+FUNCTION _api_logtriggererror
+    LPARAMETERS tcProcedure, tcMessage
+
+    PUBLIC pcApiRequestId
+
+    LOCAL lcLogFile, lcRequestId
+
+    =_api_preparetriggerenv()
+
+    IF EMPTY(pcSysDir) OR EMPTY(pcDB)
+
+    ENDIF
+
+    lcRequestId = ""
+    IF TYPE("pcApiRequestId") = "C"
+        lcRequestId = pcApiRequestId
+    ENDIF
+
+    lcLogFile = pcSysDir + pcDB + "\api_trigger_errors.log"
+
+    TRY
+        STRTOFILE( ;
+            TTOC(DATETIME(), 1) + "|" + ;
+            lcRequestId + "|" + ;
+            TRANSFORM(tcProcedure) + "|" + ;
+            TRANSFORM(tcMessage) + CHR(13) + CHR(10), ;
+            lcLogFile, ;
+            1 ;
+        )
+    CATCH
+    ENDTRY
+
+ENDFUNC
+
+
+
+
+**********************************
+**********************************
+**** Kardex de Productos *********
+**********************************
+PROCEDURE _insertkardex
+	IF TYPE('llEstamosCorriendoFVP') = 'U'
+	    RETURN .t.
+	ELSE
+
+	* lógica normal del ERP
+		LOCAL lcidAliasExiBodIns,lcidMensExiBodIns,llTaKarInsAbierta,llTaExiBodInsAbierta,llTaCataBodInsAbierta,;
+				lnidproExiIns,lccodExiIns,lnIdbodExiIns,lnidbodTraExiIns,lnEntSalExiBod,llokExiIns,;
+				lncantiExiIns,lnCostoExiIns,lnCostoTotalExiIns
+
+		IF plRecosteando=.t.
+			RETURN .t.  &&& si se esta insertando cuentas desde la sincronizacion, no se hace nada
+		ELSE
+			STORE ALIAS() TO lcidAliasExiBodIns
+			STORE '' TO lcidMensExiBodIns
+			STORE .t. TO llokExiIns
+
+			STORE idproducto 	TO lnidproExiIns
+			STORE idbodega 		TO lnIdbodExiIns
+			STORE idbodegatras 	TO lnidbodTraExiIns
+			STORE ctrolinv 		TO lnEntSalExiBod
+			STORE cantidad 		TO lncantiExiIns
+			STORE costounitario	TO lnCostoExiIns
+			STORE preciosiniva	TO lnpreciosi
+			STORE costototal 	TO lnCostoTotalExiIns
+			STORE tipoprod 		TO lnTipProExiIns
+			STORE fecalta		TO ltfecaltaprex
+			STORE fecmod 		TO ltfecmodprex
+			STORE nodo			TO lcnodprex
+			STORE iduser		TO lnusrprex
+			STORE pcuser		TO lcpcusprex
+			STORE eliminado		TO lneliminado
+			STORE origen		TO lcorigenmov
+			STORE idtipodocto	TO lnidtipo
+			STORE iddocto 		TO lniddoc
+			STORE fechadocto	TO ldfecd
+			STORE idclipro		TO lnidclpr
+			STORE llavelote		TO lnLlaveLote
+
+			************ Abriendo Tablas Necesarias si no estan abiertas todavia
+			llTaExiBodInsAbierta=!USED("taexiIns")
+			IF llTaExiBodInsAbierta
+				USE pcsysdir+pcDB+"\invexisbodega" IN 0 SHARED AGAIN ALIAS taexiIns ORDER llave		&&idbodega+idproducto
+			ENDIF
+
+			llTaExiBodLoteInsAbierta=!USED("taexiInsLote")
+			IF llTaExiBodLoteInsAbierta
+				USE pcsysdir+pcDB+"\invexisbodegaLote" IN 0 SHARED AGAIN ALIAS taexiInsLote ORDER llave		&&idbodega+idproducto+idlote
+			ENDIF
+
+			llTaCataBodInsAbierta=!USED("tacataIns")
+			IF llTaCataBodInsAbierta
+				USE pcsysdir+pcDB+"\invproductos" IN 0 SHARED AGAIN ALIAS tacataIns ORDER idproducto
+			ENDIF
+			llTaTipBodInsAbierta=!USED("sistipodoctos")
+			IF llTaTipBodInsAbierta
+				USE pcsysdir+pcDB+"\sistipodoctos" IN 0 SHARED AGAIN ORDER IDTIPODOCT
+			ENDIF
+
+			****** iniciando la actualizacion de existencias en el catalogo y en las bodegas
+
+			IF SEEK(lnidproExiIns,"tacataIns")
+				lccodExiIns=ALLTRIM(tacataIns.codprod)
+				lnConNegativos=tacataIns.connegativos
+			ELSE
+				lcidMensExiBodIns="No se encontró el registro con id: "+ALLTRIM(STR(lnidproExiIns))
+				lccodExiIns=""
+				llokExiIns=.f.
+				lnConNegativos=0
+			ENDIF
+
+			IF 	llokExiIns	AND lneliminado=0	&&& si todo bien continuamos y el registro no era un borrador eliminado
+				***********************************
+				***** actualizando catalogo  ******
+				IF lnEntSalExiBod=1		&&& entrada
+					IF lnTipProExiIns=3			&&&& es item servicio/gastos
+						lnNewProExiBod=lnCostoExiIns
+					ELSE
+						lnNewProExiBod=IIF((NVL(tacataIns.existencia,0)+lncantiExiIns)=0,NVL(tacataIns.costopromedio,0),ABS((NVL(tacataIns.costototal,0)+lnCostoTotalExiIns)/(tacataIns.existencia+lncantiExiIns)))
+					ENDIF
+					REPLACE existencia WITH NVL(tacataIns.existencia,0)+lncantiExiIns,;
+						costototal WITH NVL(tacataIns.costototal,0)+lnCostoTotalExiIns,;
+						costopromedio WITH lnNewProExiBod NEXT 1 IN tacataIns
+					IF _tallY=0
+						lcidMensExiBodIns="No fue posible Actualizar la Existencia del Registro  "+lccodExiIns
+						llokExiIns=.f.
+					ENDIF
+					****** se quito esta linea por que solo debe evaluarse la existencia en la bodega no en el producto global
+	*!*					IF tacataIns.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+	*!*						lcidMensExiBodIns="Existencia Negativa en el Registro  "+lccodExiIns
+	*!*						llokExiIns=.f.
+	*!*					ENDIF
+					IF lcorigenmov='COM'
+						IF SEEK(lnidtipo,'sistipodoctos','IDTIPODOCT')
+							llEsCompra=INLIST(sistipodoctos.tipoicv,4,6,9,12,14,15)
+						ELSE
+							llEsCompra=.f.
+						ENDIF
+						IF llEsCompra	&&&& es compra y hay que guardar el ultimo dato de compra
+							IF NVL(tacataIns.ultfechacompra,CTOD(' '))<=ldfecd OR EMPTY(NVL(tacataIns.ultfechacompra,CTOD(' ')))
+								REPLACE tacataIns.ultcostocompra WITH lnCostoExiIns,;
+										tacataIns.ultiddoctocompra with lniddoc,;
+										tacataIns.ultfechacompra with ldfecd,;
+										tacataIns.ultidcliprocompra with lnidclpr next 1 in tacataIns
+							ENDIF
+						ENDIF
+					ENDIF
+
+				ENDIF
+
+				IF lnEntSalExiBod=2		&&& salida
+					IF lnTipProExiIns=3
+						lnNewProExiBod=lnCostoExiIns
+					ELSE
+						lnNewProExiBod=IIF((NVL(tacataIns.existencia,0)-lncantiExiIns)=0,NVL(tacataIns.costopromedio,0),ABS((NVL(tacataIns.costototal,0)-lnCostoTotalExiIns)/(tacataIns.existencia-lncantiExiIns)))
+					ENDIF
+					REPLACE existencia WITH NVL(tacataIns.existencia,0)-lncantiExiIns,;
+						costototal WITH NVL(tacataIns.costototal,0)-lnCostoTotalExiIns,;
+						costopromedio WITH lnNewProExiBod NEXT 1 IN tacataIns
+					IF _tallY=0
+						lcidMensExiBodIns="No fue posible Actualizar la Existencia del Registro  "+lccodExiIns
+						llokExiIns=.f.
+					ENDIF
+					***** se quito esta linea por que solo debe evaluarse la existencia en la bodega no en el producto global
+	*!*					IF tacataIns.existencia<0  AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f.  AND lnConNegativos=0
+	*!*						lcidMensExiBodIns="Existencia Negativa en el Registro  "+lccodExiIns
+	*!*						llokExiIns=.f.
+	*!*					ENDIF
+					IF lcorigenmov='VTA'
+						IF SEEK(lnidtipo,'sistipodoctos','IDTIPODOCT')
+							llEsVenta=INLIST(sistipodoctos.tipoicv,4,9,10,11,12)
+						ELSE
+							llEsVenta=.f.
+						ENDIF
+						IF llEsVenta	&&&& es compra y hay que guardar el ultimo dato de compra
+							IF NVL(tacataIns.ultfechaventa,CTOD(' '))<=ldfecd OR EMPTY(NVL(tacataIns.ultfechaventa,CTOD(' ')))
+								REPLACE tacataIns.ultprecioventa WITH lnpreciosi,;
+										tacataIns.ultiddoctoventa with lniddoc,;
+										tacataIns.ultfechaventa with ldfecd,;
+										tacataIns.ultidcliproventa with lnidclpr next 1 in tacataIns
+							ENDIF
+						ENDIF
+					ENDIF
+				ENDIF
+				**** si es traspaso no se hace nada en el catalgo
+
+				*********************************
+				***** Actualizando Bodegas ******
+				IF llokExiIns &&& si todo bien continuamos
+					IF !SEEK(STR(lnIdbodExiIns)+STR(lnidproExiIns),"taexiIns")		&&& si no esta lo inserta
+						lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+						INSERT INTO taexiIns (idexisbode,idproducto,idbodega,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+								value (lnIdEXiBodNew,lnidproExiIns,lnIdbodExiIns,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+					ENDIF
+
+					IF SEEK(STR(lnIdbodExiIns)+STR(lnidproExiIns),"taexiIns")
+						IF lnEntSalExiBod=1		&&& entrada
+							lnNewProExiBod=IIF((NVL(taexiIns.existencia,0)+lncantiExiIns)=0,NVL(taexiIns.costo,0),ABS((NVL(taexiIns.costototal,0)+lnCostoTotalExiIns)/(NVL(taexiIns.existencia,0)+lncantiExiIns)))
+							REPLACE existencia WITH NVL(taexiIns.existencia,0)+lncantiExiIns,;
+								costototal WITH NVL(taexiIns.costototal,0)+lnCostoTotalExiIns,;
+								costo WITH lnNewProExiBod NEXT 1 IN taexiIns
+							IF _tallY=0
+								lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS del Registro  "+lccodExiIns
+								llokExiIns=.f.
+							ENDIF
+							**** se quito esta linea por que si es insercion de una entrada y el producto aun despues de la entrada es negativo siempre se inserta la entrada
+	*!*							IF taexiIns.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+	*!*								lcidMensExiBodIns="Existencia Negativa en la bodega del Registro  "+lccodExiIns
+	*!*								llokExiIns=.f.
+	*!*							ENDIF
+						ENDIF
+						IF lnEntSalExiBod=2 OR lnEntSalExiBod=3		&&& salida o traspaso
+							lnNewProExiBod=IIF((NVL(taexiIns.existencia,0)-lncantiExiIns)=0,NVL(taexiIns.costo,0),ABS((NVL(taexiIns.costototal,0)-lnCostoTotalExiIns)/(NVL(taexiIns.existencia,0)-lncantiExiIns)))
+							REPLACE existencia WITH NVL(taexiIns.existencia,0)-lncantiExiIns,;
+								costototal WITH NVL(taexiIns.costototal,0)-lnCostoTotalExiIns,;
+								costo WITH lnNewProExiBod NEXT 1 IN taexiIns
+							IF _tallY=0
+								lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS del Registro  "+lccodExiIns
+								llokExiIns=.f.
+							ENDIF
+							IF taexiIns.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+								lcidMensExiBodIns="Existencia Negativa en la bodega del Registro  "+lccodExiIns
+								llokExiIns=.f.
+							ENDIF
+						ENDIF
+						IF lnEntSalExiBod=3		&&& Ingresamos la unidades en la bdega de traspaso
+							IF !SEEK(STR(lnidbodTraExiIns)+STR(lnidproExiIns),"taexiIns")		&&& si no esta lo inserta
+								lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+								INSERT INTO taexiIns (idexisbode,idproducto,idbodega,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+										value (lnIdEXiBodNew,lnidproExiIns,lnidbodTraExiIns,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+							ENDIF
+
+							IF SEEK(STR(lnidbodTraExiIns)+STR(lnidproExiIns),"taexiIns")
+								lnNewProExiBod=IIF((NVL(taexiIns.existencia,0)+lncantiExiIns)=0,NVL(taexiIns.costo,0),ABS((NVL(taexiIns.costototal,0)+lnCostoTotalExiIns)/(NVL(taexiIns.existencia,0)+lncantiExiIns)))
+								REPLACE existencia WITH NVL(taexiIns.existencia,0)+lncantiExiIns,;
+									costototal WITH NVL(taexiIns.costototal,0)+lnCostoTotalExiIns,;
+									costo WITH lnNewProExiBod NEXT 1 IN taexiIns
+								IF _tallY=0
+									lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS DE TRASPASO del Registro  "+lccodExiIns
+									llokExiIns=.f.
+								ENDIF
+								**** se quito esta linea por que si se esta insertando un traspaso para enviarle a esta bodega no importa que quede en negativo
+	*!*								IF taexiIns.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+	*!*									lcidMensExiBodIns="Existencia Negativa en la bodega del Registro  "+lccodExiIns
+	*!*									llokExiIns=.f.
+	*!*								ENDIF
+							ELSE
+								lcidMensExiBodIns="No fue posible Encontra la Bodega de TRASPASO en el registro "+lccodExiIns
+							ENDIF
+						ENDIF
+					ELSE
+						lcidMensExiBodIns="No fue posible Encontra la Bodega en el registro "+lccodExiIns
+					ENDIF
+				ENDIF
+			ENDIF
+
+
+
+			********** todo esto aqui es igual que  lo anterior pero en la bodega por lotes
+			IF lnLlaveLote<>0
+				IF 	llokExiIns	AND lneliminado=0	&&& si todo bien continuamos y el registro no era un borrador eliminado
+					*********************************
+					***** Actualizando Bodegas ******
+					IF llokExiIns &&& si todo bien continuamos
+						IF !SEEK(STR(lnIdbodExiIns)+STR(lnidproExiIns)+STR(lnLlaveLote),"taexiInsLote")		&&& si no esta lo inserta
+							lnIdEXiBodLoteNew=_SiguienteIdTabla(pcNodo,"SIS")
+							INSERT INTO taexiInsLote (idexisbodelote,idproducto,idbodega,idlote,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+									value (lnIdEXiBodLoteNew,lnidproExiIns,lnIdbodExiIns,lnLlaveLote,0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+						ENDIF
+
+						IF SEEK(STR(lnIdbodExiIns)+STR(lnidproExiIns)+STR(lnLlaveLote),"taexiInsLote")
+							IF lnEntSalExiBod=1		&&& entrada
+								lnNewProExiBod=IIF((NVL(taexiInsLote.existencia,0)+lncantiExiIns)=0,NVL(taexiInsLote.costo,0),ABS((NVL(taexiInsLote.costototal,0)+lnCostoTotalExiIns)/(NVL(taexiInsLote.existencia,0)+lncantiExiIns)))
+								REPLACE existencia WITH NVL(taexiInsLote.existencia,0)+lncantiExiIns,;
+									costototal WITH NVL(taexiInsLote.costototal,0)+lnCostoTotalExiIns,;
+									costo WITH lnNewProExiBod NEXT 1 IN taexiInsLote
+								IF _tallY=0
+									lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS DEL LOTE del Registro  "+lccodExiIns
+									llokExiIns=.f.
+								ENDIF
+								**** (ya no se quito )se quito esta linea por que si es insercion de una entrada y el producto aun despues de la entrada es negativo siempre se inserta la entrada
+								IF taexiInsLote.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+									lcidMensExiBodIns="Existencia Negativa en la bodega del Registro  "+lccodExiIns
+									llokExiIns=.f.
+								ENDIF
+							ENDIF
+							IF lnEntSalExiBod=2 OR lnEntSalExiBod=3		&&& salida o traspaso
+								lnNewProExiBod=IIF((NVL(taexiInsLote.existencia,0)-lncantiExiIns)=0,NVL(taexiInsLote.costo,0),ABS((NVL(taexiInsLote.costototal,0)-lnCostoTotalExiIns)/(NVL(taexiInsLote.existencia,0)-lncantiExiIns)))
+								REPLACE existencia WITH NVL(taexiInsLote.existencia,0)-lncantiExiIns,;
+									costototal WITH NVL(taexiInsLote.costototal,0)-lnCostoTotalExiIns,;
+									costo WITH lnNewProExiBod NEXT 1 IN taexiInsLote
+								IF _tallY=0
+									lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS DEL LOTE del Registro  "+lccodExiIns
+									llokExiIns=.f.
+								ENDIF
+								IF taexiInsLote.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+									lcidMensExiBodIns="Existencia Negativa en la bodega por lote del Registro  "+lccodExiIns
+									llokExiIns=.f.
+								ENDIF
+							ENDIF
+							IF lnEntSalExiBod=3		&&& Ingresamos la unidades en la bdega de traspaso
+								IF !SEEK(STR(lnidbodTraExiIns)+STR(lnidproExiIns)+STR(lnLlaveLote),"taexiInsLote")		&&& si no esta lo inserta
+									lnIdEXiBodLoteNew=_SiguienteIdTabla(pcNodo,"SIS")
+									INSERT INTO taexiInsLote (idexisbodelote,idproducto,idbodega,idlote,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+											value (lnIdEXiBodLoteNew,lnidproExiIns,lnidbodTraExiIns,lnLlaveLote,0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+								ENDIF
+
+								IF SEEK(STR(lnidbodTraExiIns)+STR(lnidproExiIns)+STR(lnLlaveLote),"taexiInsLote")
+									lnNewProExiBod=IIF((NVL(taexiInsLote.existencia,0)+lncantiExiIns)=0,NVL(taexiInsLote.costo,0),ABS((NVL(taexiInsLote.costototal,0)+lnCostoTotalExiIns)/(NVL(taexiInsLote.existencia,0)+lncantiExiIns)))
+									REPLACE existencia WITH NVL(taexiInsLote.existencia,0)+lncantiExiIns,;
+										costototal WITH NVL(taexiInsLote.costototal,0)+lnCostoTotalExiIns,;
+										costo WITH lnNewProExiBod NEXT 1 IN taexiInsLote
+									IF _tallY=0
+										lcidMensExiBodIns="No fue posible Actualizar la Existencia BODEGAS DE TRASPASO del Registro  "+lccodExiIns
+										llokExiIns=.f.
+									ENDIF
+									**** (si importa... se descomento esto) se quito esta linea por que si se esta insertando un traspaso para enviarle a esta bodega no importa que quede en negativo
+									IF taexiInsLote.existencia<0 AND lnTipProExiIns=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+										lcidMensExiBodIns="Existencia Negativa en la bodega por lote del Registro  "+lccodExiIns
+										llokExiIns=.f.
+									ENDIF
+								ELSE
+									lcidMensExiBodIns="No fue posible Encontra la Bodega de TRASPASO DEL LOTE en el registro "+lccodExiIns
+								ENDIF
+							ENDIF
+						ELSE
+							lcidMensExiBodIns="No fue posible Encontra la Bodega DEL LOTE en el registro "+lccodExiIns
+						ENDIF
+					ENDIF
+				ENDIF
+
+			ENDIF
+
+
+
+			IF llTaExiBodInsAbierta
+				USE IN taexiIns
+			ENDIF
+			IF llTaExiBodLoteInsAbierta
+				USE IN taexiInsLote
+			ENDIF
+			IF llTaCataBodInsAbierta
+				USE IN tacataIns
+			ENDIF
+			IF llTaTipBodInsAbierta
+				USE IN sistipodoctos
+			ENDIF
+
+			SELECT (lcidAliasExiBodIns)
+
+
+			IF EMPTY(lcidMensExiBodIns)
+			    RETURN .t.
+			ELSE
+		        MESSAGEBOX(lcidMensExiBodIns,16,'Error de Integridad... (_insertkardex)',2000)
+			    RETURN .f.
+			ENDIF
+
+		ENDIF
+	ENDIF
+ENDPROC
+
+
+
+
+PROCEDURE _updatekardex
+
+IF TYPE('llEstamosCorriendoFVP') = 'U'
+    RETURN .t.
+ELSE
+	* lógica normal del ERP
+
+		LOCAL lcidAliasExiBodEdi,lcidMensExiBodEdi,llTaKarEdiAbierta,llTaExiBodEdiAbierta,llTaCataBodEdiAbierta,;
+				lnidproExiEdi,lccodExiEdi,lnIdbodExiEdi,lnidbodTraExiEdi,lnEntSalExiBod,llokExiEdi,;
+				lncantiExiEdi,lnCostoExiEdi,lnCostoTotalExiEdi
+
+		IF plRecosteando=.t.
+			RETURN .t.  &&& si se esta insertando cuentas desde la sincronizacion, no se hace nada
+		ELSE
+			STORE ALIAS() TO lcidAliasExiBodEdi
+			STORE '' TO lcidMensExiBodEdi
+			STORE .t. TO llokExiEdi
+
+			STORE idproducto 	TO lnidproExiEdi
+			STORE idbodega 		TO lnIdbodExiEdi
+			STORE idbodegatras 	TO lnidbodTraExiEdi
+			STORE status		TO lnstaExiEdi
+			STORE eliminado		TO lnEliExiEdi
+			STORE ctrolinv 		TO lnEntSalExiBod
+			STORE cantidad 		TO lncantiExiEdi
+			STORE costounitario	TO lnCostoExiEdi
+			STORE costototal 	TO lnCostoTotalExiEdi
+			STORE tipoprod		TO lnTipProExiEdi
+			STORE CURVAL("cantidad")		TO lncantiExiEdiold
+			STORE CURVAL("costounitario")	TO lnCostoExiEdiold
+			STORE CURVAL("costototal")	 	TO lnCostoTotalExiEdiold
+			STORE CURVAL("status")			TO lnstaExiEdiOld
+			STORE CURVAL("eliminado")		TO lnEliExiEdiOld
+			STORE fecalta		TO ltfecaltaprex
+			STORE fecmod 		TO ltfecmodprex
+			STORE nodo			TO lcnodprex
+			STORE iduser		TO lnusrprex
+			STORE pcuser		TO lcpcusprex
+			STORE llavelote		TO lnLlaveLote
+
+			IF (lnstaExiEdi=0 AND lnstaExiEdiOld<>lnstaExiEdi) OR (lnEliExiEdi=1 AND lnEliExiEdi<>lnEliExiEdiOld)
+				IF lnEntSalExiBod=1
+					lnEntSalExiBod=2
+				ELSE
+					IF lnEntSalExiBod=2
+						lnEntSalExiBod=1
+					ENDIF
+					IF lnEntSalExiBod=3
+						lnEntSalExiBod=4	&&& anulacion de traspaso
+					ENDIF
+
+				ENDIF
+			ELSE
+				STORE lncantiExiEdi-lncantiExiEdiold TO lncantiExiEdi
+				STORE lnCostoTotalExiEdi-lnCostoTotalExiEdiold 	TO lnCostoTotalExiEdi
+			ENDIF
+
+			IF (lnstaExiEdi=0 AND lnstaExiEdiOld=lnstaExiEdi) or (lnEliExiEdi=1 AND lnEliExiEdi=lnEliExiEdiOld) OR (lnstaExiEdi=0 AND lnstaExiEdiold=-1) OR lnEntSalExiBod<=0
+				lcidMensExiBodEdi=""		&&& no hay nada que hacer
+			ELSE
+				************ Abriendo Tablas Necesarias si no estan abiertas todavia
+				llTaExiBodEdiAbierta=!USED("taexiEdi")
+				IF llTaExiBodEdiAbierta
+					USE pcsysdir+pcDB+"\invexisbodega" IN 0 SHARED AGAIN ALIAS taexiEdi ORDER llave		&&idbodega+idproducto
+				ENDIF
+
+				llTaExiBodLoteEdiAbierta=!USED("taexiEdiLote")
+				IF llTaExiBodLoteEdiAbierta
+					USE pcsysdir+pcDB+"\invexisbodegaLote" IN 0 SHARED AGAIN ALIAS taexiEdiLote ORDER llave		&&idbodega+idproducto+idlote
+				ENDIF
+
+				llTaCataBodEdiAbierta=!USED("tacataEdi")
+				IF llTaCataBodEdiAbierta
+					USE pcsysdir+pcDB+"\invproductos" IN 0 SHARED AGAIN ALIAS tacataEdi ORDER idproducto
+				ENDIF
+
+				****** iniciando la actualizacion de existencias en el catalogo y en las bodegas
+				IF SEEK(lnidproExiEdi,"tacataEdi")
+					lccodExiEdi=ALLTRIM(tacataEdi.codprod)
+					lnConNegativos=tacataEdi.ConNegativos
+				ELSE
+					lcidMensExiBodEdi="No fue posible encontrar el registro con id: "+ALLTRIM(STR(lnidproExiEdi))
+					lccodExiEdi=""
+					llokExiEdi=.f.
+					lnConNegativos=0
+				ENDIF
+
+				IF 	llokExiEdi		&&& si todo bien continuamos
+					***********************************
+					***** actualizando catalogo  ******
+					IF lnEntSalExiBod=1	AND (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)	&&& entrada
+						IF lnTipProExiEdi=3
+							lnNewProExiBod=lnCostoExiEdi
+						ELSE
+							lnNewProExiBod=IIF((NVL(tacataEdi.existencia,0)+lncantiExiEdi)=0,NVL(tacataEdi.costopromedio,0),ABS((NVL(tacataEdi.costototal,0)+lnCostoTotalExiEdi)/(tacataEdi.existencia+lncantiExiEdi)))
+						ENDIF
+						REPLACE tacataEdi.existencia WITH NVL(tacataEdi.existencia,0)+lncantiExiEdi,;
+							tacataEdi.costototal WITH NVL(tacataEdi.costototal,0)+lnCostoTotalExiEdi,;
+							tacataEdi.costopromedio WITH lnNewProExiBod NEXT 1 IN tacataEdi
+ENDTEXT
+	RETURN lcParte
+ENDFUNC
+
+FUNCTION _SigaStoredSourceParte02
+	LOCAL lcParte
+	TEXT TO lcParte NOSHOW
+						IF _tallY=0
+							lcidMensExiBodEdi="No fue posible Actualizar la Existencia del Registro  "+lccodExiEdi
+							llokExiEdi=.f.
+						ENDIF
+	*!*						IF tacataEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+	*!*							lcidMensExiBodEdi="Existencia Negativa en el Registro  "+lccodExiEdi
+	*!*							llokExiEdi=.f.
+	*!*						ENDIF
+					ENDIF
+					IF lnEntSalExiBod=2	AND (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)	&&& salida
+						IF lnTipProExiEdi=3
+							lnNewProExiBod=lnCostoExiEdi
+						ELSE
+							lnNewProExiBod=IIF((NVL(tacataEdi.existencia,0)-lncantiExiEdi)=0,NVL(tacataEdi.costopromedio,0),ABS((NVL(tacataEdi.costototal,0)-lnCostoTotalExiEdi)/(tacataEdi.existencia-lncantiExiEdi)))
+						ENDIF
+						REPLACE tacataEdi.existencia WITH NVL(tacataEdi.existencia,0)-lncantiExiEdi,;
+							tacataEdi.costototal WITH NVL(tacataEdi.costototal,0)-lnCostoTotalExiEdi,;
+							tacataEdi.costopromedio WITH lnNewProExiBod NEXT 1 IN tacataEdi
+						IF _tallY=0
+							lcidMensExiBodEdi="No fue posible Actualizar la Existencia del Registro  "+lccodExiEdi
+							llokExiEdi=.f.
+						ENDIF
+	*!*						IF tacataEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+	*!*							lcidMensExiBodEdi="Existencia Negativa en el Registro  "+lccodExiEdi
+	*!*							llokExiEdi=.f.
+	*!*						ENDIF
+
+					ENDIF
+					**** si es traspaso no se hace nada en el catalgo
+
+					*********************************
+					***** Actualizando Bodegas ******
+					IF llokExiEdi		&&& si todo bien continuamos
+						IF !SEEK(STR(lnIdbodExiEdi)+STR(lnidproExiEdi),"taexiEdi")		&&& si no esta lo inserta
+							lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+							INSERT INTO taexiEdi (idexisbode,idproducto,idbodega,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+									value (lnIdEXiBodNew,lnidproExiEdi,lnIdbodExiEdi,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+						ENDIF
+
+						IF SEEK(STR(lnIdbodExiEdi)+STR(lnidproExiEdi),"taexiEdi")
+							IF lnEntSalExiBod=1	OR lnEntSalExiBod=4	&&& entrada o anulacion de traspaso
+								IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+									lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)+lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)+lncantiExiEdi)))
+									REPLACE existencia WITH NVL(taexiEdi.existencia,0)+lncantiExiEdi,;
+										costototal WITH NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi,;
+										costo WITH lnNewProExiBod NEXT 1 IN taexiEdi
+									IF _tallY=0
+										lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS del Registro  "+lccodExiEdi
+										llokExiEdi=.f.
+									ENDIF
+									IF taexiEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+										lcidMensExiBodEdi="Existencia Negativa en la bodega del Registro  "+lccodExiEdi
+										llokExiEdi=.f.
+									ENDIF
+								ENDIF
+							ENDIF
+							IF lnEntSalExiBod=2	OR lnEntSalExiBod=3	&&& salida o traspaso
+								IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+									lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)-lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)-lncantiExiEdi)))
+									REPLACE existencia WITH NVL(taexiEdi.existencia,0)-lncantiExiEdi,;
+										costototal WITH NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi,;
+										costo WITH lnNewProExiBod NEXT 1 IN taexiEdi
+									IF _tallY=0
+										lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS del Registro  "+lccodExiEdi
+										llokExiEdi=.f.
+									ENDIF
+									IF taexiEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+										lcidMensExiBodEdi="Existencia Negativa en la bodega del Registro  "+lccodExiEdi
+										llokExiEdi=.f.
+									ENDIF
+								ENDIF
+							ENDIF
+							IF lnEntSalExiBod=3		&&& Ingresamos la unidades en la bdega de traspaso
+								IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+									IF !SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi),"taexiEdi")		&&& si no esta lo inserta
+										lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+										INSERT INTO taexiEdi (idexisbode,idproducto,idbodega,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+												value (lnIdEXiBodNew,lnidproExiEdi,lnidbodTraExiEdi,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+									ENDIF
+									IF SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi),"taexiEdi")
+										lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)+lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)+lncantiExiEdi)))
+										REPLACE existencia WITH NVL(taexiEdi.existencia,0)+lncantiExiEdi,;
+											costototal WITH NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi,;
+											costo WITH lnNewProExiBod NEXT 1 IN taexiEdi
+										IF _tallY=0
+											lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS DE TRASPASO del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+										IF taexiEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+											lcidMensExiBodEdi="Existencia Negativa en la bodega del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+									ELSE
+										lcidMensExiBodEdi="No fue posible Encontra la Bodega de TRASPASO en el registro "+lccodExiEdi
+									ENDIF
+								ENDIF
+							ENDIF
+							IF lnEntSalExiBod=4		&&& Anulamos las unidades en la bdega de traspaso
+								IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+									IF !SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi),"taexiEdi")		&&& si no esta lo inserta
+										lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+										INSERT INTO taexiEdi (idexisbode,idproducto,idbodega,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+												value (lnIdEXiBodNew,lnidproExiEdi,lnidbodTraExiEdi,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+									ENDIF
+
+									IF SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi),"taexiEdi")
+										lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)-lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)-lncantiExiEdi)))
+										REPLACE existencia WITH NVL(taexiEdi.existencia,0)-lncantiExiEdi,;
+											costototal WITH NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi,;
+											costo WITH lnNewProExiBod NEXT 1 IN taexiEdi
+										IF _tallY=0
+											lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS DE TRASPASO del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+										IF taexiEdi.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+											lcidMensExiBodEdi="Existencia Negativa en la bodega...  del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+									ELSE
+										lcidMensExiBodEdi="No fue posible Encontra la Bodega de TRASPASO en el registro "+lccodExiEdi
+									ENDIF
+								ENDIF
+							ENDIF
+						ELSE
+							lcidMensExiBodEdi="No fue posible Encontra la Bodega en el registro "+lccodExiEdi
+						ENDIF
+					ENDIF
+
+
+
+					*********************************
+					***** Actualizando Bodegas POR LOTE ******
+					IF lnLlaveLote<>0
+						IF llokExiEdi		&&& si todo bien continuamos
+							IF !SEEK(STR(lnIdbodExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")		&&& si no esta lo inserta
+								lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+								INSERT INTO taexiEdiLote (idexisbode,idproducto,idbodega,idlote,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+										value (lnIdEXiBodNew,lnidproExiEdi,lnIdbodExiEdi,lnLlaveLote,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+							ENDIF
+
+							IF SEEK(STR(lnIdbodExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")
+								IF lnEntSalExiBod=1	OR lnEntSalExiBod=4	&&& entrada o anulacion de traspaso
+									IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+										lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)+lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)+lncantiExiEdi)))
+										REPLACE existencia WITH NVL(taexiEdi.existencia,0)+lncantiExiEdi,;
+											costototal WITH NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi,;
+											costo WITH lnNewProExiBod NEXT 1 IN taexiEdiLote
+										IF _tallY=0
+											lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS LOTE del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+										IF taexiEdiLote.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+											lcidMensExiBodEdi="Existencia Negativa en la bodega del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+									ENDIF
+								ENDIF
+								IF lnEntSalExiBod=2	OR lnEntSalExiBod=3	&&& salida o traspaso
+									IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+										lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)-lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)-lncantiExiEdi)))
+										REPLACE existencia WITH NVL(taexiEdi.existencia,0)-lncantiExiEdi,;
+											costototal WITH NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi,;
+											costo WITH lnNewProExiBod NEXT 1 IN taexiEdiLote
+										IF _tallY=0
+											lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGA LOTE del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+										IF taexiEdiLote.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+											lcidMensExiBodEdi="Existencia Negativa en la bodega lote del Registro  "+lccodExiEdi
+											llokExiEdi=.f.
+										ENDIF
+									ENDIF
+								ENDIF
+								IF lnEntSalExiBod=3		&&& Ingresamos la unidades en la bdega de traspaso
+									IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+										IF !SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")		&&& si no esta lo inserta
+											lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+											INSERT INTO taexiEdiLote (idexisbode,idproducto,idbodega,idlote,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+													value (lnIdEXiBodNew,lnidproExiEdi,lnidbodTraExiEdi,lnLlaveLote,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+										ENDIF
+										IF SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")
+											lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)+lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)+lncantiExiEdi)))
+											REPLACE existencia WITH NVL(taexiEdi.existencia,0)+lncantiExiEdi,;
+												costototal WITH NVL(taexiEdi.costototal,0)+lnCostoTotalExiEdi,;
+												costo WITH lnNewProExiBod NEXT 1 IN taexiEdiLote
+											IF _tallY=0
+												lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGA LOTE DE TRASPASO del Registro  "+lccodExiEdi
+												llokExiEdi=.f.
+											ENDIF
+											IF taexiEdiLote.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+												lcidMensExiBodEdi="Existencia Negativa en la bodega lote del Registro  "+lccodExiEdi
+												llokExiEdi=.f.
+											ENDIF
+										ELSE
+											lcidMensExiBodEdi="No fue posible Encontra la Bodega LOTE de TRASPASO en el registro "+lccodExiEdi
+										ENDIF
+									ENDIF
+								ENDIF
+								IF lnEntSalExiBod=4		&&& Anulamos las unidades en la bdega de traspaso
+									IF (lncantiExiEdi<>0 OR lnCostoTotalExiEdi<>0)
+										IF !SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")		&&& si no esta lo inserta
+											lnIdEXiBodNew=_SiguienteIdTabla(pcNodo,"SIS")
+											INSERT INTO taexiEdiLote (idexisbode,idproducto,idbodega,idlote,ubicacion,existencia,costo,costototal,fecalta,fecmod,nodo,iduser,pcuser) ;
+													value (lnIdEXiBodNew,lnidproExiEdi,lnidbodTraExiEdi,lnLlaveLote,'',0,0,0,ltfecmodprex,ltfecmodprex,lcnodprex,lnusrprex,lcpcusprex)
+										ENDIF
+
+										IF SEEK(STR(lnidbodTraExiEdi)+STR(lnidproExiEdi)+STR(lnLlaveLote),"taexiEdiLote")
+											lnNewProExiBod=IIF((NVL(taexiEdi.existencia,0)-lncantiExiEdi)=0,NVL(taexiEdi.costo,0),ABS((NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi)/(NVL(taexiEdi.existencia,0)-lncantiExiEdi)))
+											REPLACE existencia WITH NVL(taexiEdi.existencia,0)-lncantiExiEdi,;
+												costototal WITH NVL(taexiEdi.costototal,0)-lnCostoTotalExiEdi,;
+												costo WITH lnNewProExiBod NEXT 1 IN taexiEdiLote
+											IF _tallY=0
+												lcidMensExiBodEdi="No fue posible Actualizar la Existencia BODEGAS LOTE DE TRASPASO del Registro  "+lccodExiEdi
+												llokExiEdi=.f.
+											ENDIF
+											IF taexiEdiLote.existencia<0 AND lnTipProExiEdi=1 AND plconExistenciasNegativas=.f. AND lnConNegativos=0
+												lcidMensExiBodEdi="Existencia Negativa en la bodega Lote...  del Registro  "+lccodExiEdi
+												llokExiEdi=.f.
+											ENDIF
+										ELSE
+											lcidMensExiBodEdi="No fue posible Encontra la Bodega lote de TRASPASO en el registro "+lccodExiEdi
+										ENDIF
+									ENDIF
+								ENDIF
+							ELSE
+								lcidMensExiBodEdi="No fue posible Encontra la Bodega Lote en el registro "+lccodExiEdi
+							ENDIF
+						ENDIF
+					ENDIF
+				ENDIF
+
+				IF llTaExiBodEdiAbierta
+					USE IN taexiEdi
+				ENDIF
+				IF llTaExiBodLoteEdiAbierta
+					USE IN taexiEdiLote
+				ENDIF
+				IF llTaCataBodEdiAbierta
+					USE IN tacataEdi
+				ENDIF
+
+				SELECT (lcidAliasExiBodEdi)
+			ENDIF
+
+			IF EMPTY(lcidMensExiBodEdi)
+			    llretornafin=.t.
+			ELSE
+		        MESSAGEBOX(lcidMensExiBodEdi,16,'Error de Integridad... (_updatekardex)',2000)
+			    llretornafin=.f.
+			ENDIF
+
+			RETURN llretornafin
+		ENDIF
+	ENDIF
+ENDPROC
+
+
+
+
+
+
+
+**********************************
+**********************************
+***** VENTAS ********************
+
+**** ventasDetalle insertar
+PROCEDURE _insertventasdeta
+IF TYPE('llEstamosCorriendoFVP') = 'U'
+    RETURN .t.
+ELSE
+	LOCAL lcidAliasComIns,lcidMensComIns,llTaKarInsAbierta
+
+	STORE ALIAS() TO lcidAliasComIns
+	STORE '' TO lcidMensComIns
+
+	IF status=-1		&&&& es borrador no se hace nada
+		lcidMensComIns=""
+	ELSE
+		llTaKarInsAbierta=!USED("takarIns")
+		IF llTaKarInsAbierta
+			USE pcsysdir+pcDB+"\siskardex" IN 0 SHARED AGAIN ALIAS takarIns ORDER iddoctod
+		ENDIF
+
+		llTaKarInsAbiertaR=!USED("cyvventas")
+		IF llTaKarInsAbiertaR
+			USE pcsysdir+pcDB+"\cyvventas" IN 0 SHARED AGAIN ALIAS cyvventas ORDER iddocto
+		ENDIF
+
+		***** KARDEX DE INVENTARIOS POR ventas
+		**cyvventasdeta.entsal<>0
+		IF .t.
+			lnidComDIns=cyvventasdeta.iddocto
+			lnidpedidod=cyvventasdeta.idpedidod
+			lnidllave=cyvventasdeta.iddoctod
+
+			IF cyvventasdeta.entsal=1
+				lnCantiped=-cyvventasdeta.cantidad
+			ELSE
+				IF cyvventasdeta.entsal=2
+					lnCantiped=cyvventasdeta.cantidad
+				ELSE
+					lnCantiped=0
+				ENDIF
+			ENDIF
+
+			IF SEEK(lnidComDIns,"cyvventas","iddocto")
+				ldidtipComDIns=cyvventas.idtipodocto
+				lnidserComDInv=cyvventas.idserie
+				lcnumComDIns=cyvventas.numero
+				ldFecComDIns=cyvventas.fechadocto
+				lnidclipComDIns=cyvventas.idclipro
+				lnTotdComDIns=cyvventas.totaldocto
+				lnidcajbanComDIns=cyvventas.idcajban
+				lnctrolCYBComDIns=cyvventas.ctrolcyb
+				lnctrolvtaComDIns=cyvventas.ctrolvta
+				lnctrolcxcComDIns=cyvventas.ctrolcxc
+				lcnotasComDins=cyvventas.notas
+				lchoradoctoComDins=cyvventas.horadocto
+				lnidIslComDInv=cyvventas.idisla
+			ELSE
+				ldidtipComDIns=0
+				lnidserComDInv=0
+				lcnumComDIns=''
+				ldFecComDIns=CTOD(' ')
+				lnidclipComDIns=0
+				lnTotdComDIns=0
+				lnidcajbanComDIns=0
+				lchoradoctoComDins=''
+				lcnotasComDins=''
+				lnctrolCYBComDIns=0
+				lnctrolvtaComDIns=0
+				lnctrolcxcComDIns=0
+				lnidIslComDInv=0
+			ENDIF
+			IF ldidtipComDIns<>0
+				TRY
+					lnregistrostotal=RECCOUNT('takarIns')
+					lcversiesta=cyvventasdeta.iddoctod
+					lcmitmpllalias=ALIAS()
+					SELECT takarIns
+
+					*LOCATE FOR takarIns.iddoctod=lcversiesta
+					*llLlegoAlFinal=EOF()
+					llLlegoAlFinal=!SEEK(lcversiesta ,'takarIns','iddoctod')
+
+					IF !EMPTY(lcmitmpllalias)
+						SELECT (lcmitmpllalias)
+					ENDIF
+
+					IF llLlegoAlFinal
+
+						INSERT INTO takarIns (iddoctod,iddocto,idtipodocto,idserie,idcajban,idisla,numero,horadocto,fechadocto,idclipro,totaldocto,;
+													idproducto,unimed,cantidad,idproductoUniMed,cantiunimed,factor,largo,ancho,area,desperdicio,;
+													totalcesc,totalrenta,tipoiva,poriva,totaliva,preciosinivaminimo,preciosiniva,preciosinivaunidad,totalventasiniva,;
+													costounitario,costounimed,costototal,idbodega,idbodegatras,idctrocosto,;
+													idvendedord,idkit,llavekit,llavelote,tipoprod,periodo,origen,;
+													cantidadkit,cantidadserie,ctrolcomvta,ctrolinv,ctrolcxcp,ctrolcyb,notas,status,eliminado,;
+													fecalta,fecmod,fecactu,nodo,iduser,pcuser);
+								VALUES (cyvventasdeta.iddoctod,cyvventasdeta.iddocto,ldidtipComDIns,lnidserComDInv,lnidcajbanComDIns,;
+										lnidIslComDInv,lcnumComDIns,lchoradoctoComDins,ldFecComDIns,lnidclipComDIns,lnTotdComDIns,cyvventasdeta.idproducto,;
+										cyvventasdeta.unimed,cyvventasdeta.cantidad,cyvventasdeta.idproductoUniMed,cyvventasdeta.cantiunimed,;
+										cyvventasdeta.factor,cyvventasdeta.largo,cyvventasdeta.ancho,cyvventasdeta.area,cyvventasdeta.desperdicio,;
+										cyvventasdeta.totalcesc,cyvventasdeta.totalrenta,cyvventasdeta.tipoiva,cyvventasdeta.poriva,;
+										cyvventasdeta.totaliva,cyvventasdeta.preciosinivaminimo,cyvventasdeta.preciosiniva,;
+										cyvventasdeta.preciosinivaunidad,cyvventasdeta.totalventasiniva,;
+										cyvventasdeta.costounitario,cyvventasdeta.costounimed,cyvventasdeta.costototal,;
+										cyvventasdeta.idbodega,cyvventasdeta.idbodegatras,cyvventasdeta.idctrocosto,;
+										cyvventasdeta.idvendedord,cyvventasdeta.idkit,cyvventasdeta.llavekit,cyvventasdeta.llavelote,;
+										cyvventasdeta.tipoprod,cyvventasdeta.periodo,cyvventasdeta.origen,;
+										cyvventasdeta.cantidadkit,cyvventasdeta.cantidadserie,;
+										lnctrolvtaComDIns,cyvventasdeta.entsal,lnctrolcxcComDIns,lnctrolcybComDIns,;
+										lcnotasComDins,cyvventasdeta.status,cyvventasdeta.eliminado,;
+										cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
+										cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
+						lninsertado = RECCOUNT('takarIns')-lnregistrostotal
+
+					ELSE
+						UPDATE takarIns SET iddocto=cyvventasdeta.iddocto,;
+											idtipodocto=ldidtipComDIns,;
+											idserie=lnidserComDInv,;
+											idisla=lnidIslComDInv,;
+											idcajban=lnidcajbanComDIns,;
+											numero=lcnumComDIns,;
+											fechadocto=ldFecComDIns,;
+											idclipro=lnidclipComDIns,;
+											totaldocto=lnTotdComDIns,;
+											idproducto=cyvventasdeta.idproducto,;
+											unimed=cyvventasdeta.unimed,;
+											cantidad=cyvventasdeta.cantidad,;
+											idproductoUniMed=cyvventasdeta.idproductoUniMed,;
+											cantiunimed=cyvventasdeta.cantiunimed,;
+											factor=cyvventasdeta.factor,;
+											largo=cyvventasdeta.largo,;
+											ancho=cyvventasdeta.ancho,;
+											area=cyvventasdeta.area,;
+											idvendedord=cyvventasdeta.idvendedord,;
+											desperdicio=cyvventasdeta.desperdicio,;
+											costounitario=cyvventasdeta.costounitario,;
+											costounimed=cyvventasdeta.costounimed,;
+											costototal=cyvventasdeta.costototal,;
+											totalcesc=cyvventasdeta.totalcesc,;
+											totalrenta=cyvventasdeta.totalrenta,;
+											tipoiva=cyvventasdeta.tipoiva,;
+											poriva=cyvventasdeta.poriva,;
+											totaliva=cyvventasdeta.totaliva,;
+											preciosinivaminimo=cyvventasdeta.preciosinivaminimo,;
+											preciosiniva=cyvventasdeta.preciosiniva,;
+											preciosinivaunidad=cyvventasdeta.preciosinivaunidad,;
+											totalventasiniva=cyvventasdeta.totalventasiniva,;
+											idbodega=cyvventasdeta.idbodega,;
+											idbodegatras=cyvventasdeta.idbodegatras,;
+											idctrocosto=cyvventasdeta.idctrocosto,;
+											idkit=cyvventasdeta.idkit,;
+											llavekit=cyvventasdeta.llavekit,;
+											llavelote=cyvventasdeta.llavelote,;
+											tipoprod=cyvventasdeta.tipoprod,;
+											periodo=cyvventasdeta.periodo,;
+											origen=cyvventasdeta.origen,;
+											cantidadkit=cyvventasdeta.cantidadkit,;
+											cantidadserie=cyvventasdeta.cantidadserie,;
+											ctrolcomvta=lnctrolvtaComDIns,;
+											ctrolinv=cyvventasdeta.entsal,;
+											ctrolcxcp=lnctrolcxcComDIns,;
+											ctrolcyb=lnctrolcybComDIns,;
+											status=cyvventasdeta.status,;
+											eliminado=cyvventasdeta.eliminado,;
+											fecalta=cyvventasdeta.fecalta,;
+											fecmod=cyvventasdeta.fecmod,;
+											fecactu=cyvventasdeta.fecactu,;
+											nodo=cyvventasdeta.nodo,;
+											iduser=cyvventasdeta.iduser,;
+											pcuser=cyvventasdeta.pcuser ;
+										WHERE iddoctod=cyvventasdeta.iddoctod
+						lninsertado=1
+					ENDIF
+					**** posteando pedidos
+					IF lninsertado<>0
+						*REPLACE cantidadpedido WITH  cantidadpedido+lnCantiped FOR iddoctod=lnidpedidod IN takarIns
+						UPDATE takarIns SET cantidadpedido=cantidadpedido+lnCantiped WHERE iddoctod=lnidpedidod
+					ENDIF
+
+					IF lninsertado=0
+						lcidMensComIns="Error al Insertar datos en el Kardex de productos"
+					ENDIF
+
+				CATCH TO lEx
+					lcidMensComIns=lcidMensComIns+" Error.. " + TRANSFORM(lEx.Message)
+				FINALLY
+					IF !EMPTY(lcidAliasComIns)
+						SELECT (lcidAliasComIns)
+					ENDIF
+				ENDTRY
+			ELSE
+				lcidMensComIns='El tipo de Documento no puede ser 0 (cero)'
+			ENDIF
+		ENDIF
+
+		IF llTaKarInsAbierta
+			USE IN takarIns
+		ENDIF
+		IF llTaKarInsAbiertaR
+			USE IN cyvventas
+		ENDIF
+		IF !EMPTY(lcidAliasComIns)
+			SELECT (lcidAliasComIns)
+		ENDIF
+	ENDIF
+
+
+	IF EMPTY(lcidMensComIns)
+	    llretornafin=.t.
+	ELSE
+        MESSAGEBOX(lcidMensComIns,16,'Error de Integridad... (_insertventasdeta)',2000)
+	    llretornafin=.f.
+	ENDIF
+
+	RETURN llretornafin
+ENDIF
+ENDPROC
+
+
+
+**** ventasDetalle Actualizar
+PROCEDURE _updateventasdeta
+
+IF TYPE('llEstamosCorriendoFVP') = 'U'
+    RETURN .t.
+ELSE
+	LOCAL lcidAliasComEdi,lcidMensComEdi,llTaKarEdiAbierta
+
+	STORE ALIAS() TO lcidAliasComEdi
+	STORE '' TO lcidMensComEdi
+	llretorok=.t.
+
+	IF (status=-1 and CURVAL("status")=-1) AND !(CURVAL("status")=-1 AND status=1) AND !(CURVAL("status")=1 AND status=0)		&&&& es borrador no se hace nada
+
+		llretorok=.t.
+
+	ELSE
+
+		llTaKarEdiAbierta=!USED("takarEdi")
+		IF llTaKarEdiAbierta
+			USE pcsysdir+pcDB+"\siskardex" IN 0 SHARED AGAIN ALIAS takarEdi ORDER iddoctod
+		ENDIF
+		llTaKarInsAbiertaR=!USED("cyvventas")
+		IF llTaKarInsAbiertaR
+			USE pcsysdir+pcDB+"\cyvventas" IN 0 SHARED AGAIN ALIAS cyvventas ORDER iddocto
+		ENDIF
+
+		***** KARDEX DE INVENTARIOS por ventas
+		** cyvventasdeta.entsal<>0
+		IF .t.
+			lnidComDEdi=cyvventasdeta.iddocto
+			lnidpedidod=cyvventasdeta.idpedidod
+			lnregactu=cyvventasdeta.iddoctod
+
+			IF cyvventasdeta.entsal=1
+				IF (CURVAL("cyvventasdeta.status")<>0 AND cyvventasdeta.status=0)
+					lnCantiped=+CURVAL("cyvventasdeta.cantidad")
+				ELSE
+					IF cyvventasdeta.status<>0
+						lnCantiped=+CURVAL("cyvventasdeta.cantidad")-cyvventasdeta.cantidad
+					ELSE
+						lnCantiped=0
+					ENDIF
+				ENDIF
+			ELSE
+				IF cyvventasdeta.entsal=2
+					IF (CURVAL("cyvventasdeta.status")<>0 AND cyvventasdeta.status=0)
+						lnCantiped=-CURVAL("cyvventasdeta.cantidad")
+					ELSE
+						IF cyvventasdeta.status<>0
+							lnCantiped=-CURVAL("cyvventasdeta.cantidad")+cyvventasdeta.cantidad
+						ELSE
+							lnCantiped=0
+						ENDIF
+					ENDIF
+				ELSE
+					lnCantiped=0
+				ENDIF
+			ENDIF
+
+ENDTEXT
+	RETURN lcParte
+ENDFUNC
+
+FUNCTION _SigaStoredSourceParte03
+	LOCAL lcParte
+	TEXT TO lcParte NOSHOW
+			IF SEEK(lnidComDEdi,"cyvventas","iddocto")
+				ldidtipComDEdi=cyvventas.idtipodocto
+				lnidserComDEdi=cyvventas.idserie
+				lcnumComDEdi=cyvventas.numero
+				ldFecComDEdi=cyvventas.fechadocto
+				lnidclipComDEdi=cyvventas.idclipro
+				lnTotdComDEdi=cyvventas.totaldocto
+				lnidcajbanComEdi=cyvventas.idcajban
+				lnctrolCYBComDIns=cyvventas.ctrolcyb
+				lnctrolvtaComDIns=cyvventas.ctrolvta
+				lnctrolcxcComDIns=cyvventas.ctrolcxc
+				lchoradoctoComEdi=cyvventas.horadocto
+				lcnotasComEdi=cyvventas.notas
+				lnidIslComDEdi=cyvventas.idisla
+			ELSE
+				ldidtipComDEdi=0
+				lnctrolcxcComDIns=0
+				lnidserComDEdi=0
+				lcnumComDEdi=''
+				ldFecComDEdi=CTOD(' ')
+				lnidclipComDEdi=0
+				lnctrolcybcomdins=0
+				lnTotdComDEdi=0
+				lnidcajbanComEdi=0
+				lchoradoctoComEdi=''
+				lcnotasComEdi=''
+				lnctrolvtaComDIns=0
+				lnidIslComDEdi=0
+			ENDIF
+			IF ldidtipComDEdi<>0
+				TRY
+					IF (CURVAL("status")=-1 AND status<>-1)
+						lnregistrostotal=RECCOUNT('takarEdi')
+
+						INSERT INTO takarEdi (iddoctod,iddocto,idtipodocto,idserie,idcajban,idisla,numero,horadocto,fechadocto,idclipro,totaldocto,;
+												idproducto,unimed,cantidad,idproductoUniMed,cantiunimed,factor,largo,ancho,area,desperdicio,;
+												totalcesc,totalrenta,tipoiva,poriva,totaliva,preciosinivaminimo,preciosiniva,preciosinivaunidad,totalventasiniva,;
+												costounitario,costounimed,costototal,idbodega,idbodegatras,idctrocosto,;
+												idvendedord,idkit,llavekit,llavelote,tipoprod,periodo,origen,;
+												cantidadkit,cantidadserie,ctrolcomvta,ctrolinv,ctrolcxcp,ctrolcyb,notas,status,eliminado,;
+												fecalta,fecmod,fecactu,nodo,iduser,pcuser);
+							VALUES (cyvventasdeta.iddoctod,cyvventasdeta.iddocto,ldidtipComDEdi,lnidserComDEdi,lnidcajbanComEdi,;
+									lnidIslComDEdi,lcnumComDEdi,lchoradoctoComEdi,ldFecComDEdi,lnidclipComDEdi,lnTotdComDEdi,cyvventasdeta.idproducto,;
+									cyvventasdeta.unimed,cyvventasdeta.cantidad,cyvventasdeta.idproductoUniMed,cyvventasdeta.cantiunimed,;
+									cyvventasdeta.factor,cyvventasdeta.largo,cyvventasdeta.ancho,cyvventasdeta.area,cyvventasdeta.desperdicio,;
+									cyvventasdeta.totalcesc,cyvventasdeta.totalrenta,cyvventasdeta.tipoiva,cyvventasdeta.poriva,;
+									cyvventasdeta.totaliva,cyvventasdeta.preciosinivaminimo,cyvventasdeta.preciosiniva,;
+									cyvventasdeta.preciosinivaunidad,cyvventasdeta.totalventasiniva,;
+									cyvventasdeta.costounitario,cyvventasdeta.costounimed,cyvventasdeta.costototal,;
+									cyvventasdeta.idbodega,cyvventasdeta.idbodegatras,cyvventasdeta.idctrocosto,;
+									cyvventasdeta.idvendedord,cyvventasdeta.idkit,cyvventasdeta.llavekit,cyvventasdeta.llavelote,;
+									cyvventasdeta.tipoprod,cyvventasdeta.periodo,cyvventasdeta.origen,;
+									cyvventasdeta.cantidadkit,cyvventasdeta.cantidadserie,;
+									lnctrolvtaComDIns,cyvventasdeta.entsal,lnctrolcxcComDIns,lnctrolcybComDIns,;
+									lcnotasComEdi,cyvventasdeta.status,cyvventasdeta.eliminado,;
+									cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
+									cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
+						lninsertado=RECCOUNT('takarEdi')-lnregistrostotal
+
+					ELSE
+						lninsertado = 0
+
+						UPDATE takarEdi SET iddocto=cyvventasdeta.iddocto,;
+						                    idtipodocto=ldidtipComDEdi,;
+						                    idserie=lnidserComDEdi,;
+						                    idisla=lnidIslComDEdi,;
+						                    idcajban=lnidcajbanComEdi,;
+						                    numero=lcnumComDEdi,;
+						                    horadocto=lchoradoctoComEdi,;
+						                    fechadocto=ldFecComDEdi,;
+						                    idclipro=lnidclipComDEdi,;
+						                    totaldocto=lnTotdComDEdi,;
+						                    idproducto=cyvventasdeta.idproducto,;
+						                    unimed=cyvventasdeta.unimed,;
+						                    cantidad=cyvventasdeta.cantidad,;
+						                    idproductoUniMed=cyvventasdeta.idproductoUniMed,;
+						                    cantiunimed=cyvventasdeta.cantiunimed,;
+						                    factor=cyvventasdeta.factor,;
+						                    largo=cyvventasdeta.largo,;
+						                    ancho=cyvventasdeta.ancho,;
+						                    area=cyvventasdeta.area,;
+						                    idvendedord=cyvventasdeta.idvendedord,;
+						                    desperdicio=cyvventasdeta.desperdicio,;
+						                    costounitario=cyvventasdeta.costounitario,;
+						                    costounimed=cyvventasdeta.costounimed,;
+						                    costototal=cyvventasdeta.costototal,;
+						                    totalcesc=cyvventasdeta.totalcesc,;
+						                    totalrenta=cyvventasdeta.totalrenta,;
+						                    tipoiva=cyvventasdeta.tipoiva,;
+						                    poriva=cyvventasdeta.poriva,;
+						                    totaliva=cyvventasdeta.totaliva,;
+						                    preciosinivaminimo=cyvventasdeta.preciosinivaminimo,;
+						                    preciosiniva=cyvventasdeta.preciosiniva,;
+						                    preciosinivaunidad=cyvventasdeta.preciosinivaunidad,;
+						                    totalventasiniva=cyvventasdeta.totalventasiniva,;
+						                    idbodega=cyvventasdeta.idbodega,;
+						                    idbodegatras=cyvventasdeta.idbodegatras,;
+						                    idctrocosto=cyvventasdeta.idctrocosto,;
+						                    idkit=cyvventasdeta.idkit,;
+						                    llavekit=cyvventasdeta.llavekit,;
+						                    llavelote=cyvventasdeta.llavelote,;
+						                    tipoprod=cyvventasdeta.tipoprod,;
+						                    periodo=cyvventasdeta.periodo,;
+						                    origen=cyvventasdeta.origen,;
+						                    cantidadkit=cyvventasdeta.cantidadkit,;
+						                    cantidadserie=cyvventasdeta.cantidadserie,;
+						                    ctrolcomvta=lnctrolvtaComDIns,;
+						                    ctrolinv=cyvventasdeta.entsal,;
+						                    ctrolcxcp=lnctrolcxcComDIns,;
+						                    ctrolcyb=lnctrolcybComDIns,;
+						                    notas=lcnotasComEdi,;
+						                    status=cyvventasdeta.status,;
+						                    eliminado=cyvventasdeta.eliminado,;
+						                    fecalta=cyvventasdeta.fecalta,;
+						                    fecmod=cyvventasdeta.fecmod,;
+						                    fecactu=cyvventasdeta.fecactu,;
+						                    nodo=cyvventasdeta.nodo,;
+						                    iduser=cyvventasdeta.iduser,;
+						                    pcuser=cyvventasdeta.pcuser ;
+						                WHERE iddoctod=cyvventasdeta.iddoctod
+
+						lninsertado = _TALLY
+
+						IF lninsertado = 0
+						    INSERT INTO takarEdi (iddoctod,iddocto,idtipodocto,idserie,idcajban,idisla,numero,horadocto,fechadocto,idclipro,totaldocto,;
+						                          idproducto,unimed,cantidad,idproductoUniMed,cantiunimed,factor,largo,ancho,area,desperdicio,;
+						                          totalcesc,totalrenta,tipoiva,poriva,totaliva,preciosinivaminimo,preciosiniva,preciosinivaunidad,totalventasiniva,;
+						                          costounitario,costounimed,costototal,idbodega,idbodegatras,idctrocosto,;
+						                          idvendedord,idkit,llavekit,llavelote,tipoprod,periodo,origen,;
+						                          cantidadkit,cantidadserie,ctrolcomvta,ctrolinv,ctrolcxcp,ctrolcyb,notas,status,eliminado,;
+						                          fecalta,fecmod,fecactu,nodo,iduser,pcuser);
+						        VALUES (cyvventasdeta.iddoctod,cyvventasdeta.iddocto,ldidtipComDEdi,lnidserComDEdi,lnidcajbanComEdi,;
+						                lnidIslComDEdi,lcnumComDEdi,lchoradoctoComEdi,ldFecComDEdi,lnidclipComDEdi,lnTotdComDEdi,cyvventasdeta.idproducto,;
+						                cyvventasdeta.unimed,cyvventasdeta.cantidad,cyvventasdeta.idproductoUniMed,cyvventasdeta.cantiunimed,;
+						                cyvventasdeta.factor,cyvventasdeta.largo,cyvventasdeta.ancho,cyvventasdeta.area,cyvventasdeta.desperdicio,;
+						                cyvventasdeta.totalcesc,cyvventasdeta.totalrenta,cyvventasdeta.tipoiva,cyvventasdeta.poriva,;
+						                cyvventasdeta.totaliva,cyvventasdeta.preciosinivaminimo,cyvventasdeta.preciosiniva,;
+						                cyvventasdeta.preciosinivaunidad,cyvventasdeta.totalventasiniva,;
+						                cyvventasdeta.costounitario,cyvventasdeta.costounimed,cyvventasdeta.costototal,;
+						                cyvventasdeta.idbodega,cyvventasdeta.idbodegatras,cyvventasdeta.idctrocosto,;
+						                cyvventasdeta.idvendedord,cyvventasdeta.idkit,cyvventasdeta.llavekit,cyvventasdeta.llavelote,;
+						                cyvventasdeta.tipoprod,cyvventasdeta.periodo,cyvventasdeta.origen,;
+						                cyvventasdeta.cantidadkit,cyvventasdeta.cantidadserie,;
+						                lnctrolvtaComDIns,cyvventasdeta.entsal,lnctrolcxcComDIns,lnctrolcybComDIns,;
+						                lcnotasComEdi,cyvventasdeta.status,cyvventasdeta.eliminado,;
+						                cyvventasdeta.fecalta,cyvventasdeta.fecmod,cyvventasdeta.fecactu,;
+						                cyvventasdeta.nodo,cyvventasdeta.iduser,cyvventasdeta.pcuser)
+
+						    lninsertado = 1
+						ENDIF
+					ENDIF
+					**** posteando pedidos
+
+					IF lnidpedidod<>0
+						*REPLACE cantidadpedido WITH cantidadpedido+lnCantiped FOR iddoctod=lnidpedidod IN  takarIns
+						UPDATE takarEdi SET cantidadpedido=cantidadpedido+lnCantiped WHERE iddoctod=lnidpedidod
+					ENDIF
+
+					IF lninsertado=0
+
+						lcidMensComEdi="Error al Editar datos en el Kardex de productos  .."
+					ENDIF
+
+				CATCH TO lEx
+
+					lcidMensComEdi=lcidMensComEdi+" Error " + TRANSFORM(lEx.Message)
+
+					llretorok=.f.
+				FINALLY
+					IF llTaKarEdiAbierta
+						USE IN takarEdi
+					ENDIF
+					IF llTaKarInsAbiertaR
+						USE IN cyvventas
+					ENDIF
+
+					SELECT (lcidAliasComEdi)
+
+					IF !EMPTY(lcidMensComEdi)
+						llretorok=.f.
+					ENDIF
+				ENDTRY
+			ELSE
+				lcidMensComEdi='El Tipo de Documento no puede Ser 0 (Cero)'
+			ENDIF
+		ENDIF
+	ENDIF
+
+	IF !EMPTY(lcidMensComEdi)
+        MESSAGEBOX(lcidMensComEdi,16,'Error de Integridad... (_updateventasdeta)',2000)
+	    llretorok = .f.
+	ENDIF
+	RETURN llretorok
+ENDIF
+ENDPROC
+
+
+**********************************
+**** ventas Cuentas por Cobra y Pagar y CAJA / BANCOS
+PROCEDURE _ventascreditocontado
+IF TYPE('llEstamosCorriendoFVP') = 'U'
+    RETURN .t.
+ELSE
+	LOCAL lcidAliasComIns,lcidMensComIns,llTaKarInsAbierta,llTaKarInvAnuAbierta,lnStatusKardexVta
+	***** si se esta haciendo un cambio en la estructura de la tabla no valida algunas cosas
+	IF TYPE("pncambiandoStructura")<>'N'
+		pncambiandoStructura=0
+	ENDIF
+
+	STORE ALIAS() TO lcidAliasComIns
+	STORE '' TO lcidMensComIns
+	STORE '' TO lcandCOMiNS
+	llOkCOMCred=.t.
+
+	IF pncambiandoStructura=0
+
+		IF status=-1		&&&& es borrador no se hace nada
+			lcidMensComIns=""
+		ELSE
+			lnStatusKardexVta=IIF(NVL(cyvventas.anulado,0)=1 OR NVL(cyvventas.eliminado,0)=1 OR NVL(cyvventas.status,0)<=0,0,cyvventas.status)
+
+			llTaKarInvAnuAbierta=!USED("takarInvAnu")
+			IF llTaKarInvAnuAbierta
+				USE pcsysdir+pcDB+"\siskardex" IN 0 SHARED AGAIN ALIAS takarInvAnu
+			ENDIF
+
+			lltakardocInsAbierta=!USED("takardoc")
+			IF lltakardocInsAbierta
+				USE pcsysdir+pcDB+"\siskardexdoc" IN 0 SHARED AGAIN ALIAS takardoc ORDER iddocto
+			ENDIF
+
+			llTaCajBanInsAbierta=!USED("tacajban")
+			IF llTaCajBanInsAbierta
+				USE pcsysdir+pcDB+"\cybcajabancos" IN 0 SHARED AGAIN ALIAS tacajban ORDER idcajban
+			ENDIF
+
+			llTaTipDocInsAbierta=!USED("sistipodoctos")
+			IF llTaTipDocInsAbierta
+				USE pcsysdir+pcDB+"\sistipodoctos" IN 0 SHARED AGAIN ALIAS sistipodoctos ORDER idtipodoct
+			ENDIF
+
+			IF TYPE("takardoc.MotivoVenta")='N'
+				lcGuardarMotivo1="motivoventa=cyvventas.motivoventa,"
+				lcGuardarMotivo2=",motivoventa"
+				lcGuardarMotivo3=",cyvventas.motivoventa"
+			ELSE
+				lcGuardarMotivo1=''
+				lcGuardarMotivo2=''
+				lcGuardarMotivo3=''
+			ENDIF
+
+			***** KARDEX DE Cuentas por Cobrar o Pagar
+			IF cyvventas.ctrolcxc<>0 OR cyvventas.ctrolcyb<>0 AND cyvventas.noContabilizable=0
+				lniddocCOMIns=iddocto
+				lnidTipDocCOMIns=idtipodocto
+				IF SEEK(lnidTipDocCOMIns,'sistipodoctos','idtipodoct')
+					lnConRefCOMIns=sistipodoctos.conreferencia
+				ELSE
+					lnConRefCOMIns=0
+				ENDIF
+				TRY
+					IF SEEK(lniddocCOMIns,'takardoc','iddocto')
+						UPDATE takardoc ;
+									SET idtipodocto=cyvventas.idtipodocto,;
+										idserie=cyvventas.idserie,;
+										idcajban=cyvventas.idcajban,;
+										idisla=cyvventas.idisla,;
+										idsucursal=cyvventas.idsucursal,;
+										idctrocosto=cyvventas.idctrocosto,;
+										numero=cyvventas.numero,;
+										fechadocto=cyvventas.fechadocto,;
+										fechavenci=cyvventas.fechavenci,;
+										idclipro=cyvventas.idclipro,;
+										idagente=cyvventas.idagente,;
+										idcajbantras=0,&lcGuardarMotivo1;
+										numerocontrol=cyvventas.numerocontrol,;
+										selloRecepcion=cyvventas.selloRecepcion,;
+										codigoGeneracion=cyvventas.codigoGeneracion,;
+										turno=cyvventas.turno,;
+										idseriechq=idseriechq,;
+										presupuesto=cyvventas.presupuesto,;
+										ciclo=cyvventas.ciclo,;
+										numerochq=cyvventas.numerochq,;
+										nomcheque=cyvventas.nomcheque,;
+										numerofin=cyvventas.numerofin,;
+										idseriefu=cyvventas.idseriefu,;
+										numerofu=cyvventas.numerofu,;
+										totaldocto=cyvventas.totaldocto+cyvventas.propina,;
+										rentadocto=cyvventas.rentadocto,;
+										conreferencia=lnConRefCOMIns,;
+										periodo=cyvventas.periodo,;
+										origen=cyvventas.origen,;
+										ctrolcxcp=cyvventas.ctrolcxc,;
+										ctrolcyb=cyvventas.ctrolcyb,;
+										status=lnStatusKardexVta,;
+										eliminado=cyvventas.eliminado,;
+										fecalta=cyvventas.fecalta,;
+										fecmod=cyvventas.fecmod,;
+										recintofiscal=cyvventas.recintofiscal,;
+										regimen=cyvventas.regimen,;
+										incoterms=cyvventas.incoterms,;
+										fecactu=cyvventas.fecactu,;
+										condipago=cyvventas.condipago,;
+										nodo=cyvventas.nodo,;
+										iduser=cyvventas.iduser,;
+										noContabilizable=cyvventas.noContabilizable,;
+										pcuser=cyvventas.pcuser ;
+										WHERE iddocto=lniddocCOMIns
+						lncuentacambio=_tally
+						IF lncuentacambio=0
+							lncuentacambio=1
+						ENDIF
+
+					ELSE
+						lncuentacambio=RECCOUNT("takardoc")
+						INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
+												idisla,numero,numerofin,idseriefu,numerofu,turno,fechadocto,fechavenci,idclipro,;
+												idagente,totaldocto,condipago,rentadocto,rentaabono,cargoabono,conreferencia,;
+												idseriechq,numerochq,nomcheque,periodo,origen,ctrolcxcp,ctrolcyb,;
+												status,eliminado,fecalta,fecmod,fecactu,nodo,iduser,pcuser,regimen,;
+												codigoGeneracion,selloRecepcion,numeroControl,presupuesto,recintofiscal,incoterms,;
+												noContabilizable,ciclo &lcGuardarMotivo2);
+								VALUES (cyvventas.iddocto,cyvventas.idtipodocto,cyvventas.idserie,cyvventas.idcajban,;
+										0,cyvventas.idsucursal,cyvventas.idctrocosto,cyvventas.idisla,cyvventas.numero,;
+										cyvventas.numerofin,cyvventas.idseriefu,cyvventas.numerofu,cyvventas.turno,;
+										cyvventas.fechadocto,cyvventas.fechavenci,cyvventas.idclipro,cyvventas.idagente,;
+										cyvventas.totaldocto+cyvventas.propina,cyvventas.condipago,cyvventas.rentadocto,0,0,lnConRefCOMIns,;
+										cyvventas.idseriechq,cyvventas.numerochq,cyvventas.nomcheque,cyvventas.periodo,cyvventas.origen,;
+										cyvventas.ctrolcxc,cyvventas.ctrolcyb,lnStatusKardexVta,cyvventas.eliminado,cyvventas.fecalta,;
+										cyvventas.fecmod,cyvventas.fecactu,cyvventas.nodo,cyvventas.iduser,cyvventas.pcuser,cyvventas.regimen,;
+										cyvventas.codigoGeneracion,cyvventas.selloRecepcion,cyvventas.numeroControl,;
+										cyvventas.presupuesto,cyvventas.recintofiscal,cyvventas.incoterms,;
+										cyvventas.noContabilizable,cyvventas.ciclo &lcGuardarMotivo3)
+						lncuentacambio=RECCOUNT("takardoc")-lncuentacambio
+					ENDIF
+					IF lncuentacambio=0
+						lcidMensComIns="Error al Insertar Movimientos de Credito o Contado en ventas "
+						lcandCOMiNS=', '
+						llOkCOMCred=.f.
+					ENDIF
+				CATCH TO lEx
+					lcidMensComIns=lcidMensComIns+lcandCOMiNS+"Error " + TRANSFORM(lEx.Message)
+					lcandCOMiNS=', '
+					llOkCOMCred=.f.
+				FINALLY
+					SELECT (lcidAliasComIns)
+				ENDTRY
+			ENDIF
+
+			IF USED("takarInvAnu")
+				IF NVL(cyvventas.anulado,0)=1 OR NVL(cyvventas.eliminado,0)=1 OR NVL(cyvventas.status,0)<=0
+					UPDATE takarInvAnu ;
+						SET status=lnStatusKardexVta,;
+							eliminado=1,;
+							fecmod=cyvventas.fecmod,;
+							fecactu=cyvventas.fecactu,;
+							iduser=cyvventas.iduser,;
+							pcuser=cyvventas.pcuser ;
+						WHERE iddocto=cyvventas.iddocto ;
+							AND origen=cyvventas.origen
+				ELSE
+					llCyvVentasDetaAbierta = !USED("cyvventasdeta")
+					IF llCyvVentasDetaAbierta
+						USE pcsysdir+pcDB+"\cyvventasdeta" IN 0 SHARED AGAIN ALIAS cyvventasdeta ORDER iddoctod
+					ENDIF
+
+					UPDATE takarInvAnu ;
+						SET status=lnStatusKardexVta,;
+							eliminado=d.eliminado,;
+							fecmod=cyvventas.fecmod,;
+							fecactu=cyvventas.fecactu,;
+							iduser=cyvventas.iduser,;
+							pcuser=cyvventas.pcuser ;
+						FROM cyvventasdeta d ;
+						WHERE takarInvAnu.iddoctod=d.iddoctod ;
+							AND takarInvAnu.iddocto=cyvventas.iddocto ;
+							AND takarInvAnu.origen=cyvventas.origen ;
+							AND (takarInvAnu.status<>lnStatusKardexVta OR takarInvAnu.eliminado<>d.eliminado)
+
+					IF llCyvVentasDetaAbierta
+						USE IN cyvventasdeta
+					ENDIF
+				ENDIF
+			ENDIF
+
+			IF llTaKarInvAnuAbierta
+				USE IN takarInvAnu
+			ENDIF
+
+			IF llTaCajBanInsAbierta
+				USE IN tacajban
+			ENDIF
+
+			IF lltakardocInsAbierta
+				USE IN takardoc
+			ENDIF
+			IF llTaTipDocInsAbierta
+				USE IN sistipodoctos
+			ENDIF
+
+			SELECT (lcidAliasComIns)
+		ENDIF
+	ELSE
+		lcidMensComIns=''
+	ENDIF
+
+
+	IF EMPTY(lcidMensComIns)
+	    llretornafin=.t.
+	ELSE
+        MESSAGEBOX(lcidMensComIns,16,'Error de Integridad... (_ventascreditocontado)',2000)
+	    llretornafin=.f.
+	ENDIF
+
+
+	RETURN llretornafin
+ENDIF
+ENDPROC
+
+
+FUNCTION _api_sigawebversion
+    RETURN 2
+ENDFUNC
+
+
+* Compatibilidad VFPOLEDB: el trigger historico de ctbpartidasdeta invoca
+* esta rutina al modificar una partida. La API realiza el cambio contable
+* de forma parametrizada dentro de su propia transaccion.
+PROCEDURE _updatepartidasdeta
+    RETURN .T.
+ENDPROC
+
+FUNCTION _api_sigaaccountingversion
+    RETURN 1
+ENDFUNC
+
+FUNCTION _siga_dbc_procedures_version
+    RETURN 1
+ENDFUNC
+
+FUNCTION _siga_dbc_procedures_signature
+    RETURN "SIGA-DBC-SP-V1-20261101"
+ENDFUNC
+ENDTEXT
+	RETURN lcParte
+ENDFUNC
+
+********************************************************************
+* Valida/migra el bloque completo de stored procedures del DBC.
+* Version 0 = legado; version 1 = paquete canonico SIGA/API.
+********************************************************************
+FUNCTION _ValidarProcedimientosAlmacenadosDBC
+	LPARAMETERS tlMostrarMensaje, tlCorregir
+
+	LOCAL lcDbcObjetivo, lcDbcActivo, lcFirma, lcFirmaEsperada
+	LOCAL lcFuente, lcFuenteAnterior, lcTmpNuevo, lcTmpAnterior
+	LOCAL lcRutaBase, lcRutaRespaldo, lcArchivoOrigen, lcArchivoDestino
+	LOCAL lcContenido, lcExtension, lcDetalle, lcComando
+	LOCAL lnVersion, lnVersionObjetivo, lnExtension, lnBytes
+	LOCAL llResultado, llCorregido, llAbiertoPorRutina, llIntentoCambio
+	LOCAL llRestaurado, loError, loErrorRestaurar
+
+	IF VARTYPE(tlMostrarMensaje) <> "L"
+		tlMostrarMensaje = .T.
+	ENDIF
+	IF VARTYPE(tlCorregir) <> "L"
+		tlCorregir = .F.
+	ENDIF
+
+	lnVersionObjetivo = 1
+	lcFirmaEsperada = "SIGA-DBC-SP-V1-20261101"
+	STORE "" TO lcDbcObjetivo, lcDbcActivo, lcFirma, lcDetalle
+	STORE "" TO lcRutaRespaldo, lcTmpNuevo, lcTmpAnterior
+	STORE .F. TO llResultado, llCorregido, llAbiertoPorRutina
+	STORE .F. TO llIntentoCambio
+	llRestaurado = .T.
+	lnVersion = 0
+
+	TRY
+		IF TYPE("pcSysDir") = "C" AND TYPE("pcDB") = "C" AND ;
+				!EMPTY(pcSysDir) AND !EMPTY(pcDB)
+			lcDbcObjetivo = FULLPATH(pcSysDir + pcDB + "\masterdb.dbc")
+		ENDIF
+
+		IF EMPTY(lcDbcObjetivo) OR !FILE(lcDbcObjetivo)
+			lcDetalle = "No se encontro el masterdb.dbc de la empresa seleccionada."
+		ELSE
+			lcDbcActivo = DBC()
+			IF EMPTY(lcDbcActivo)
+				IF tlCorregir
+					OPEN DATABASE (lcDbcObjetivo) EXCLUSIVE
+				ELSE
+					OPEN DATABASE (lcDbcObjetivo) SHARED
+				ENDIF
+				llAbiertoPorRutina = .T.
+				lcDbcActivo = DBC()
+			ENDIF
+
+			IF UPPER(FULLPATH(lcDbcActivo)) <> UPPER(lcDbcObjetivo)
+				lcDetalle = "La base de datos activa no corresponde a la empresa seleccionada."
+			ELSE
+				TRY
+					lnVersion = EVALUATE("_siga_dbc_procedures_version()")
+					lcFirma = EVALUATE("_siga_dbc_procedures_signature()")
+				CATCH
+					lnVersion = 0
+					lcFirma = ""
+				ENDTRY
+
+				DO CASE
+				CASE lnVersion > lnVersionObjetivo
+					lcDetalle = "El DBC tiene una version superior (" + ;
+						TRANSFORM(lnVersion) + "); no se permite degradarla."
+				CASE lnVersion = lnVersionObjetivo AND lcFirma <> lcFirmaEsperada
+					lcDetalle = "La version coincide, pero la firma es diferente. " + ;
+						"No se reemplazo una estructura divergente."
+				CASE lnVersion = lnVersionObjetivo AND lcFirma = lcFirmaEsperada
+					llResultado = .T.
+				CASE !tlCorregir
+					lcDetalle = "La version almacenada es " + ;
+						TRANSFORM(lnVersion) + " y se requiere " + ;
+						TRANSFORM(lnVersionObjetivo) + "."
+				OTHERWISE
+					lcRutaBase = ADDBS(JUSTPATH(lcDbcObjetivo)) + ;
+						"RespaldosEstructura"
+					IF !DIRECTORY(lcRutaBase)
+						MD (lcRutaBase)
+					ENDIF
+					lcRutaRespaldo = ADDBS(lcRutaBase) + "StoredProcedures_" + ;
+						DTOS(DATE()) + "_" + STRTRAN(TIME(), ":", "") + ;
+						"_" + SYS(2015)
+					MD (lcRutaRespaldo)
+
+					FOR lnExtension = 1 TO 3
+						lcExtension = GETWORDNUM("dbc dct dcx", lnExtension)
+						lcArchivoOrigen = FORCEEXT(lcDbcObjetivo, lcExtension)
+						IF FILE(lcArchivoOrigen)
+							lcArchivoDestino = ADDBS(lcRutaRespaldo) + ;
+								JUSTFNAME(lcArchivoOrigen)
+							lcContenido = FILETOSTR(lcArchivoOrigen)
+							lnBytes = STRTOFILE(lcContenido, lcArchivoDestino, 0)
+							IF lnBytes <> LEN(lcContenido)
+								ERROR "No fue posible completar el respaldo de " + ;
+									JUSTFNAME(lcArchivoOrigen) + "."
+							ENDIF
+						ENDIF
+					ENDFOR
+
+					lcTmpNuevo = ADDBS(SYS(2023)) + ;
+						"siga_stored_nuevo_" + SYS(2015) + ".tmp"
+					lcTmpAnterior = ADDBS(SYS(2023)) + ;
+						"siga_stored_anterior_" + SYS(2015) + ".tmp"
+					COPY PROCEDURES TO (lcTmpAnterior)
+					lcFuenteAnterior = FILETOSTR(lcTmpAnterior)
+					lcFuente = _SigaStoredProceduresFuenteCanonica()
+					lnBytes = STRTOFILE(lcFuente, lcTmpNuevo, 0)
+					IF lnBytes <> LEN(lcFuente)
+						ERROR "No fue posible preparar el paquete canonico."
+					ENDIF
+
+					llIntentoCambio = .T.
+					APPEND PROCEDURES FROM (lcTmpNuevo) OVERWRITE
+
+					lnVersion = EVALUATE("_siga_dbc_procedures_version()")
+					lcFirma = EVALUATE("_siga_dbc_procedures_signature()")
+					IF lnVersion <> lnVersionObjetivo OR ;
+							lcFirma <> lcFirmaEsperada
+						ERROR "La nueva version no pudo verificarse."
+					ENDIF
+
+					llResultado = .T.
+					llCorregido = .T.
+				ENDCASE
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		llResultado = .F.
+		IF llIntentoCambio AND !EMPTY(lcTmpAnterior) AND FILE(lcTmpAnterior)
+			llRestaurado = .F.
+			TRY
+				APPEND PROCEDURES FROM (lcTmpAnterior) OVERWRITE
+				llRestaurado = .T.
+			CATCH TO loErrorRestaurar
+				llRestaurado = .F.
+			ENDTRY
+		ENDIF
+		lcDetalle = "Error " + TRANSFORM(loError.ErrorNo) + ;
+			" actualizando procedimientos:" + CHR(13) + loError.Message
+		IF !llRestaurado
+			lcDetalle = lcDetalle + CHR(13) + ;
+				"No fue posible restaurar automaticamente el bloque anterior."
+		ENDIF
+	FINALLY
+		IF !EMPTY(lcTmpNuevo) AND FILE(lcTmpNuevo)
+			ERASE (lcTmpNuevo)
+		ENDIF
+		IF !EMPTY(lcTmpAnterior) AND FILE(lcTmpAnterior)
+			ERASE (lcTmpAnterior)
+		ENDIF
+		IF llAbiertoPorRutina
+			CLOSE DATABASES
+		ENDIF
+	ENDTRY
+
+	IF tlMostrarMensaje
+		IF llCorregido AND llResultado
+			MESSAGEBOX(;
+				"SIGA actualizo el bloque completo de procedimientos " + ;
+				"almacenados a la version " + TRANSFORM(lnVersionObjetivo) + ;
+				"." + CHR(13) + CHR(13) + "Respaldo: " + lcRutaRespaldo, ;
+				64, "Procedimientos almacenados SIGA", 3000)
+		ELSE
+			IF !llResultado
+				MESSAGEBOX(;
+					"SIGA no pudo validar o actualizar los procedimientos " + ;
+					"almacenados:" + CHR(13) + lcDetalle, ;
+					48, "Procedimientos almacenados SIGA", 3000)
+			ENDIF
+		ENDIF
+	ENDIF
+
+	RETURN llResultado
+ENDFUNC

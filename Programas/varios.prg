@@ -5139,26 +5139,98 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 				2=Imprimir con Previsualizacion y ;
 				3=Mostrar Formulario para Editar
 
-	LOCAL lcAlias,lnidSQL
+	LOCAL lcAlias,lnidSQL,lnEnviarAbono
+	LOCAL lcCodTipoAbono,lcNumeroAbono,lcNombreAbono,lcCorreoAbono,lcCelularAbono
+	LOCAL lcFormatoPDFAbono,lcAsuntoAbono,lcMensajeAbono
 	lnidSQL=0
 	lcAlias=ALIAS()
+	lnEnviarAbono=0
+	lcCodTipoAbono=''
+	lcNumeroAbono=''
+	lcNombreAbono=''
+	lcCorreoAbono=''
+	lcCelularAbono=''
+	lcFormatoPDFAbono=''
+	lcAsuntoAbono=''
+	lcMensajeAbono=''
+	IF TYPE("pnEnviarDTE")="N"
+		lnEnviarAbono=pnEnviarDTE
+	ENDIF
 	lnidSQL=_conecta(pcDB)
 		
-	USE pcSysDir+pcdb+"\cybmovimientos" SHARED AGAIN ORDER iddocto IN 0 ALIAS CXCImp
-	USE pcSysDir+pcdb+"\siskardexapli" SHARED AGAIN ORDER idaplica IN 0 ALIAS ACXCImp
-	USE pcSysDir+pcdb+"\siscata" SHARED AGAIN ORDER id IN 0 ALIAS VenImp
-	USE pcSysDir+pcdb+"\sistipodoctos" SHARED AGAIN ORDER idtipodocto IN 0 ALIAS TDImp
-	USE pcSysDir+pcdb+"\sisseries" SHARED AGAIN ORDER idserie IN 0 ALIAS CXCSer
-	USE pcSysDir+pcdb+"\cybcajabancos" SHARED AGAIN ORDER idcajban IN 0 ALIAS CajImp
-	USE pcSysDir+pcdb+"\cyvclipro" SHARED AGAIN ORDER idclipro IN 0 ALIAS SNImp
-	USE pcSysDir+pcdb+"\siskardexdoc" SHARED AGAIN ORDER idclipro IN 0 ALIAS CXCDoc
-	USE pcSysDir+pcdb+"\sisformatos" SHARED AGAIN ORDER idformato IN 0 ALIAS CXCFor
+	* Limpiar cursores residuales de una impresion anterior interrumpida.
+	IF USED("c_formatostmp")
+		USE IN c_formatostmp
+	ENDIF
+	IF USED("CXCImp")
+		USE IN CXCImp
+	ENDIF
+	IF USED("ACXCImp")
+		USE IN ACXCImp
+	ENDIF
+	IF USED("VenImp")
+		USE IN VenImp
+	ENDIF
+	IF USED("TDImp")
+		USE IN TDImp
+	ENDIF
+	IF USED("CXCSer")
+		USE IN CXCSer
+	ENDIF
+	IF USED("CajImp")
+		USE IN CajImp
+	ENDIF
+	IF USED("SNImp")
+		USE IN SNImp
+	ENDIF
+	IF USED("CXCDoc")
+		USE IN CXCDoc
+	ENDIF
+	IF USED("CXCFor")
+		USE IN CXCFor
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\cybmovimientos","CXCImp","iddocto")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\siskardexapli","ACXCImp","idaplica")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\siscata","VenImp","id")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\sistipodoctos","TDImp","idtipodoct")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\sisseries","CXCSer","idserie")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\cybcajabancos","CajImp","idcajban")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\cyvclipro","SNImp","idclipro")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\siskardexdoc","CXCDoc","idclipro")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
+	IF !_AbrirTablaImpresionCYB(pcSysDir+pcdb+"\sisformatos","CXCFor","idformato")
+		=miSQLDISCONNECT(lnidSQL)
+		RETURN .F.
+	ENDIF
 
 	lcPrintActual=SET("PRINTER", 3)
 
 
 	IF lnidSQL>0
-		lcComando0="SELECT CXCImp.*,ALLTRIM(b.CodCliPro) as CodCliPro,b.clipro,b.direccion,d.codser as codserie,d.serie as serie,"+;
+		lcComando0="SELECT CXCImp.*,ALLTRIM(b.CodCliPro) as CodCliPro,b.clipro,b.direccion,NVL(b.celular,SPACE(25)) as celular,NVL(b.correodte,SPACE(250)) as correodte,d.codser as codserie,d.serie as serie,"+;
 					"NVL(j.cod,SPACE(30)) as codvende,NVL(j.nombre,SPACE(200)) as vende,"+;
 					"c.codtipo,c.tipodocto,c.clave,iif(c.ctrolCXC=0,c.ctrolcxp,c.ctrolcxc) as sumaresta,e.codcajban,e.cajban,"+;
 					"f.carabo,f.monto,f.iddoctoaplicar,h.codtipo as codtipo2,h.tipodocto as tipodocto2,h.clave as clave2,"+;
@@ -5185,6 +5257,11 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 			if !EOF()
 				SELECT c_imp
 				GO top
+				lcCodTipoAbono=ALLTRIM(c_imp.codtipo)
+				lcNumeroAbono=ALLTRIM(c_imp.numero)
+				lcNombreAbono=ALLTRIM(c_imp.clipro)
+				lcCorreoAbono=ALLTRIM(c_imp.correodte)
+				lcCelularAbono=ALLTRIM(c_imp.celular)
 				**** aplicando abonos a la fecha
 				ldfecdoc=fechadocto
 				lncliproabo=idclipro
@@ -5226,6 +5303,9 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 					lnTipoImpresion=tipoimpresion
 					lnTipoDetalle=tipodetalle
 					lnCopiasPrint=IIF(copias=0,1,copias)
+					lcFormatoPDFAbono=ALLTRIM(c_formatosTmp.formatopdf)
+					lcAsuntoAbono=ALLTRIM(c_formatosTmp.asunto)
+					lcMensajeAbono=ALLTRIM(c_formatosTmp.mensaje)
 					
 					lcmensajeimpresor='Impresor :'+SET("Printer",3)
 					SELECT c_imp					
@@ -5297,6 +5377,20 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 						*SELECT c_impdeta
 						SELECT c_imp
 						
+						IF INLIST(lnCtrl,6,7)
+							DO CASE
+								CASE lnCtrl=6
+									=EnviarAbonoCajaBancosWhatsApp(lnIdDocto,lcArchivo,lcFormatoPDFAbono,;
+										lcNumeroAbono,lcCelularAbono,lcAsuntoAbono,lcMensajeAbono)
+								CASE lnCtrl=7
+									=EnviarAbonoCajaBancosCliente(lnIdDocto,lcArchivo,lcFormatoPDFAbono,;
+										lcNumeroAbono,lcNombreAbono,lcCorreoAbono,lcCelularAbono,;
+										1,lcAsuntoAbono,lcMensajeAbono)
+							ENDCASE
+							* Generar el PDF para reenviar no equivale a imprimir.
+							* Evita el segundo envio automatico y no cambia Impreso.
+							llseimprimio=0
+						ELSE
 						IF lnCtrl=5	OR INLIST(lnCtrl,3)		&&&&INLIST(lnCtrl,3,4)
 							lcPrintActual=SET("PRINTER", 3)
 							IF TYPE("_screen.ActiveForm")='O'
@@ -5355,17 +5449,32 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 										llseimprimio=1
 								
 							ENDCASE
+						ENDIF
 						ENDIF 
-						GO TOP IN c_imp
+						IF USED("c_imp") AND llseimprimio=1 AND !INLIST(lnCtrl,5,6,7) AND ;
+								UPPER(lcCodTipoAbono)="ABOCLI" AND INLIST(lnEnviarAbono,1,2,3)
+							=EnviarAbonoCajaBancosCliente(lnIdDocto,lcArchivo,lcFormatoPDFAbono,;
+								lcNumeroAbono,lcNombreAbono,lcCorreoAbono,lcCelularAbono,;
+								lnEnviarAbono,lcAsuntoAbono,lcMensajeAbono)
+						ENDIF
+						IF USED("c_imp")
+							GO TOP IN c_imp
+						ENDIF
 						
 						IF !EMPTY(lcPrinOld)
 							SET PRINTER TO NAME (lcPrinOld)
 						ENDIF 
-						GO TOP IN c_imp
-						IF c_imp.impreso=0 AND llseimprimio=1		&&& cambiando status de Impreso
-							=miSQLEXEC(lnidSQL,"update CXCImp set impreso=1 where impreso=0 and iddocto="+ALLTRIM(STR(lnIdDocto))+" ")
+						IF USED("c_imp")
+							GO TOP IN c_imp
 						ENDIF
-						USE IN c_formatostmp
+						IF USED("c_imp")
+							IF c_imp.impreso=0 AND llseimprimio=1 AND !INLIST(lnCtrl,6,7)		&&& cambiando status de Impreso
+								=miSQLEXEC(lnidSQL,"update CXCImp set impreso=1 where impreso=0 and iddocto="+ALLTRIM(STR(lnIdDocto))+" ")
+							ENDIF
+						ENDIF
+						IF USED("c_formatostmp")
+							USE IN c_formatostmp
+						ENDIF
 					ELSE 
 					 MESSAGEBOX('No se encontro el Archivo del Formato de impresion....  '+lcArchivo,16,'Error al Imprimir...')
 					ENDIF 
@@ -5384,15 +5493,36 @@ FUNCTION ImprimirCajaBancosClientes(lnIdDocto as Integer,lnCtrl as Integer ,lnId
 		MESSAGEBOX("Imposible conectarse con el Servidor... Intente más tarde...",16,'Error de Conección...')
 	ENDIF 
 	
-	USE IN CXCImp
-	USE IN ACXCImp
-	USE IN VenImp
-	USE IN TDImp
-	USE IN CXCSer
-	USE IN CajImp
-	USE IN SNImp
-	USE IN CXCDoc
-	USE IN CXCFor
+	IF USED("c_formatostmp")
+		USE IN c_formatostmp
+	ENDIF
+	IF USED("CXCImp")
+		USE IN CXCImp
+	ENDIF
+	IF USED("ACXCImp")
+		USE IN ACXCImp
+	ENDIF
+	IF USED("VenImp")
+		USE IN VenImp
+	ENDIF
+	IF USED("TDImp")
+		USE IN TDImp
+	ENDIF
+	IF USED("CXCSer")
+		USE IN CXCSer
+	ENDIF
+	IF USED("CajImp")
+		USE IN CajImp
+	ENDIF
+	IF USED("SNImp")
+		USE IN SNImp
+	ENDIF
+	IF USED("CXCDoc")
+		USE IN CXCDoc
+	ENDIF
+	IF USED("CXCFor")
+		USE IN CXCFor
+	ENDIF
 	
 	IF !EMPTY(lcAlias)
 		SELECT (lcAlias)
@@ -5402,6 +5532,150 @@ ENDFUNC
 
 
 *********
+************************************************************************
+* Genera y envia la nota de abono usando la misma configuracion global
+* de canales de DTE: 1 correo, 2 WhatsApp, 3 ambos.
+************************************************************************
+FUNCTION EnviarAbonoCajaBancosCliente
+	LPARAMETERS tnIdDocto,tcArchivo,tcFormatoPDF,tcNumero,tcNombre,tcCorreo,tcCelular,;
+		tnCanales,tcAsunto,tcMensaje
+	LOCAL lcRutaPDF,lcArchivoPDF,lcReporte,lcCorreoTmp,lcCelularTmp
+	LOCAL llEnviarCorreo,llEnviarWhatsApp,llGenerado,llResultado,loError
+
+	llResultado=.T.
+	llGenerado=.F.
+	lcCorreoTmp=ALLTRIM(LOWER(NVL(tcCorreo,'')))
+	lcCelularTmp=solonumeros(ALLTRIM(NVL(tcCelular,'')))
+	llEnviarCorreo=INLIST(tnCanales,1,3) AND !EMPTY(ValidarVariosCorreos(lcCorreoTmp,1)) AND ;
+		!('noenviar'$lcCorreoTmp OR 'no.enviar'$lcCorreoTmp)
+	llEnviarWhatsApp=INLIST(tnCanales,2,3) AND LEN(lcCelularTmp)>=8
+
+	IF !llEnviarCorreo AND !llEnviarWhatsApp
+		IF INLIST(tnCanales,1,3) AND EMPTY(ValidarVariosCorreos(lcCorreoTmp,1))
+			WAIT WINDOW "No se envio el abono por correo: el cliente no tiene un correo valido." TIMEOUT 2
+		ENDIF
+		IF INLIST(tnCanales,2,3) AND LEN(lcCelularTmp)<8
+			WAIT WINDOW "No se envio el abono por WhatsApp: el cliente no tiene un celular valido." TIMEOUT 2
+		ENDIF
+		RETURN .F.
+	ENDIF
+
+	lcRutaPDF=ADDBS(pcSysDir+pcdb+"\ArchivosPDF")
+	IF !DIRECTORY(lcRutaPDF)
+		MD (lcRutaPDF)
+	ENDIF
+	lcArchivoPDF=LOWER(lcRutaPDF+"abocli-"+ALLTRIM(STR(tnIdDocto))+".pdf")
+	lcReporte=pcSysDir+pcdb+"\formatos\"+IIF(EMPTY(ALLTRIM(tcFormatoPDF)),ALLTRIM(tcArchivo),ALLTRIM(tcFormatoPDF))
+
+	IF !FILE(lcReporte)
+		WAIT WINDOW "No se pudo generar el PDF del abono: no existe el formato "+JUSTFNAME(lcReporte) TIMEOUT 2
+		RETURN .F.
+	ENDIF
+
+	TRY
+		=GenerarArchivoPDF_DTE(lcReporte,lcArchivoPDF)
+		llGenerado=FILE(lcArchivoPDF)
+	CATCH TO loError
+		llGenerado=.F.
+		WAIT WINDOW "No se pudo generar el PDF del abono: "+loError.Message TIMEOUT 3
+	ENDTRY
+
+	IF !llGenerado
+		RETURN .F.
+	ENDIF
+
+	IF EMPTY(ALLTRIM(tcAsunto))
+		tcAsunto="Adjuntamos Nota de Abono"
+	ENDIF
+	IF EMPTY(ALLTRIM(tcMensaje))
+		tcMensaje="Adjuntamos nota de abono "+ALLTRIM(tcNumero)
+	ENDIF
+
+	IF llEnviarCorreo
+		llResultado=enviarcorreoporOutlook(ALLTRIM(tcNumero),ALLTRIM(tcNombre),;
+			ALLTRIM(tcCorreo),lcArchivoPDF,'','ABONO') AND llResultado
+	ENDIF
+	IF llEnviarWhatsApp
+		=EnviarPorWhatsApp(lcArchivoPDF,lcCelularTmp,3,ALLTRIM(tcAsunto),ALLTRIM(tcMensaje))
+	ENDIF
+
+	RETURN llResultado
+ENDFUNC
+
+************************************************************************
+* Reenvio exclusivo por WhatsApp. Esta ruta no ejecuta correo.
+************************************************************************
+FUNCTION EnviarAbonoCajaBancosWhatsApp
+	LPARAMETERS tnIdDocto,tcArchivo,tcFormatoPDF,tcNumero,tcCelular,tcAsunto,tcMensaje
+	LOCAL lcRutaPDF,lcArchivoPDF,lcReporte,lcCelularTmp,llGenerado,loError
+
+	lcCelularTmp=solonumeros(ALLTRIM(NVL(tcCelular,'')))
+	IF LEN(lcCelularTmp)<8
+		WAIT WINDOW "No se envio el abono por WhatsApp: el cliente no tiene un celular valido." TIMEOUT 2
+		RETURN .F.
+	ENDIF
+
+	lcRutaPDF=ADDBS(pcSysDir+pcdb+"\ArchivosPDF")
+	IF !DIRECTORY(lcRutaPDF)
+		MD (lcRutaPDF)
+	ENDIF
+	lcArchivoPDF=LOWER(lcRutaPDF+"abocli-"+ALLTRIM(STR(tnIdDocto))+".pdf")
+	lcReporte=pcSysDir+pcdb+"\formatos\"+IIF(EMPTY(ALLTRIM(tcFormatoPDF)),ALLTRIM(tcArchivo),ALLTRIM(tcFormatoPDF))
+
+	IF !FILE(lcReporte)
+		WAIT WINDOW "No se pudo generar el PDF del abono: no existe el formato "+JUSTFNAME(lcReporte) TIMEOUT 2
+		RETURN .F.
+	ENDIF
+
+	llGenerado=.F.
+	TRY
+		=GenerarArchivoPDF_DTE(lcReporte,lcArchivoPDF)
+		llGenerado=FILE(lcArchivoPDF)
+	CATCH TO loError
+		WAIT WINDOW "No se pudo generar el PDF del abono: "+loError.Message TIMEOUT 3
+	ENDTRY
+	IF !llGenerado
+		RETURN .F.
+	ENDIF
+
+	IF EMPTY(ALLTRIM(tcAsunto))
+		tcAsunto="Adjuntamos Nota de Abono"
+	ENDIF
+	IF EMPTY(ALLTRIM(tcMensaje))
+		tcMensaje="Adjuntamos nota de abono "+ALLTRIM(tcNumero)
+	ENDIF
+
+	=EnviarPorWhatsApp(lcArchivoPDF,lcCelularTmp,3,ALLTRIM(tcAsunto),ALLTRIM(tcMensaje))
+	RETURN .T.
+ENDFUNC
+FUNCTION _AbrirTablaImpresionCYB(tcRuta, tcAlias, tcOrden)
+	LOCAL loError, lcDbf, lcMensaje
+	lcDbf=FORCEEXT(tcRuta,"dbf")
+	IF USED(tcAlias)
+		USE IN (tcAlias)
+	ENDIF
+	IF !FILE(lcDbf)
+		lcMensaje="No se encontro la tabla requerida para imprimir."+CHR(13)+CHR(10)+"Tabla: "+JUSTSTEM(lcDbf)+CHR(13)+CHR(10)+"Alias: "+tcAlias+CHR(13)+CHR(10)+"Ruta: "+lcDbf
+		MESSAGEBOX(lcMensaje,16,"Error al abrir tabla de impresion")
+		RETURN .F.
+	ENDIF
+	TRY
+		USE (lcDbf) IN 0 SHARED AGAIN ALIAS (tcAlias)
+		IF !EMPTY(tcOrden)
+			SELECT (tcAlias)
+			SET ORDER TO TAG (tcOrden)
+		ENDIF
+	CATCH TO loError
+		IF USED(tcAlias)
+			USE IN (tcAlias)
+		ENDIF
+		lcMensaje="No fue posible abrir la tabla requerida para imprimir."+CHR(13)+CHR(10)+"Tabla: "+JUSTSTEM(lcDbf)+CHR(13)+CHR(10)+"Alias: "+tcAlias+CHR(13)+CHR(10)+"Ruta: "+lcDbf+CHR(13)+CHR(10)+"Error "+TRANSFORM(loError.ErrorNo)+": "+loError.Message
+		MESSAGEBOX(lcMensaje,16,"Error al abrir tabla de impresion")
+		RETURN .F.
+	ENDTRY
+	RETURN .T.
+ENDFUNC
+
 FUNCTION ImprimirCuentasporCobrarPagar(lnIdDocto as Integer,lnCtrl as Integer ,lnIdConec as integer)
 	**** se paso como parametro el numero de documento a imprimir
 	**** lnCtrl 1=Imprimir Directo al Impresor ;
@@ -14076,7 +14350,8 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 	lcCurEstFin = "c_exp_prod"
 
 	SELECT codprod, codoriginal, producto, unidadmedida, familia, marca, existencia, ;
-		costoinicial, costopromedio, ultcostocompra, preciosiniva, precioconiva, idproducto ;
+		costoinicial, costopromedio, ultcostocompra, preciosiniva, precioconiva, ;
+		pordescuento, idproducto ;
 		FROM c_invproductos ;
 		INTO CURSOR c_exp_prod READWRITE 
 
@@ -14115,7 +14390,8 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 			.COLUMNS(9).ColumnWidth = IIF(pnOcultaCostos = 1, 0, 15.00)
 			.COLUMNS(10).ColumnWidth = 13.00
 			.COLUMNS(11).ColumnWidth = 13.00
-			.COLUMNS(12).ColumnWidth = 15.00
+			.COLUMNS(12).ColumnWidth = 10.00
+			.COLUMNS(13).ColumnWidth = 15.00
 
 			.COLUMNS(1).NumberFormat = "@"
 			.COLUMNS(2).NumberFormat = "@"
@@ -14128,16 +14404,17 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 			.COLUMNS(9).NumberFormat = "#,##0.00"
 			.COLUMNS(10).NumberFormat = "#,##0.00"
 			.COLUMNS(11).NumberFormat = "#,##0.00"
-			.COLUMNS(12).NumberFormat = "@"
+			.COLUMNS(12).NumberFormat = "#,##0.00"
+			.COLUMNS(13).NumberFormat = "@"
 		ENDWITH
 
 		lnFila = 1
-		lnColBodIni = 13
-		lnColFinal = 12 + lnBodegaCount
+		lnColBodIni = 14
+		lnColFinal = 13 + lnBodegaCount
 
 		xlsheet.Cells(lnFila, 2).Value = ALLTRIM(pcNomEmpresa)
 
-		WITH xlsheet.Range(xlsheet.Cells(1, 2), xlsheet.Cells(1, MAX(12, lnColFinal)))
+		WITH xlsheet.Range(xlsheet.Cells(1, 2), xlsheet.Cells(1, MAX(13, lnColFinal)))
 			.Font.Bold = .T.
 			.Font.ColorIndex = 11
 			.Font.Size = 18
@@ -14151,7 +14428,7 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 
 		xlsheet.Cells(lnFila, 2).Value = "CATALOGO DE PRODUCTOS"
 
-		WITH xlsheet.Range(xlsheet.Cells(2, 2), xlsheet.Cells(2, MAX(12, lnColFinal)))
+		WITH xlsheet.Range(xlsheet.Cells(2, 2), xlsheet.Cells(2, MAX(13, lnColFinal)))
 			.Font.Bold = .T.
 			.Font.Size = 14
 			.WrapText = .F.
@@ -14173,7 +14450,8 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 		xlsheet.Cells(lnFila, 9).Value = "COST.UTL.COMP."
 		xlsheet.Cells(lnFila, 10).Value = "PREC.S/IVA"
 		xlsheet.Cells(lnFila, 11).Value = "PREC.C/IVA"
-		xlsheet.Cells(lnFila, 12).Value = "COD.ORIGINAL"
+		xlsheet.Cells(lnFila, 12).Value = "DESC.%"
+		xlsheet.Cells(lnFila, 13).Value = "COD.ORIGINAL"
 
 		lnCol = lnColBodIni
 
@@ -14195,7 +14473,7 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 			lnCol = lnCol + 1
 		ENDSCAN
 
-		WITH xlsheet.Range(xlsheet.Cells(lnFila, 1), xlsheet.Cells(lnFila, MAX(12, lnColFinal)))
+		WITH xlsheet.Range(xlsheet.Cells(lnFila, 1), xlsheet.Cells(lnFila, MAX(13, lnColFinal)))
 			.Font.Bold = .T.
 			.WrapText = .T.
 			.Interior.ColorIndex = 11
@@ -14224,7 +14502,8 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 			xlsheet.Cells(lnFila, 9).Value = IIF(pnOcultaCostos = 1, 0, ultcostocompra)
 			xlsheet.Cells(lnFila, 10).Value = preciosiniva
 			xlsheet.Cells(lnFila, 11).Value = precioconiva
-			xlsheet.Cells(lnFila, 12).Value = ALLTRIM(codoriginal)
+			xlsheet.Cells(lnFila, 12).Value = pordescuento
+			xlsheet.Cells(lnFila, 13).Value = ALLTRIM(codoriginal)
 
 			lnCol = lnColBodIni
 
@@ -14254,7 +14533,7 @@ FUNCTION EnviarCatalogoaExcelBodegas()
 			IF lnPar = 1
 				lnPar = 0
 
-				FOR iii = 1 TO MAX(12, lnColFinal)
+				FOR iii = 1 TO MAX(13, lnColFinal)
 					xlsheet.Cells(lnFila, iii).Interior.Color = 15527148
 				ENDFOR
 			ELSE
@@ -40521,6 +40800,8 @@ FUNCTION EnviarCorreoNew(lcNumControlDTECorreo,lcNombreCliDTEenvio,lcCorreoDTeEn
 			lcAsuntoDTE='Anulacion de Documento ...   '
 		CASE lcOperacionRealizadaDTE='COMPRA'
 			lcAsuntoDTE='Adjuntamos Documentos ...   '
+		CASE lcOperacionRealizadaDTE='ABONO'
+			lcAsuntoDTE='Adjuntamos Nota de Abono ...   '
 		OTHERWISE
 		lcAsuntoDTE='Mensaje ...   '
 	ENDCASE 
@@ -40668,6 +40949,8 @@ FUNCTION enviarcorreoporOutlook(lcNumControlDTECorreo,lcNombreCliDTEenvio,lcCorr
 				lcAsuntoDTE='Anulacion de Documento ...   '
 			CASE lcOperacionRealizadaDTE='COMPRA'
 				lcAsuntoDTE='Adjuntamos Documentos ...   '
+			CASE lcOperacionRealizadaDTE='ABONO'
+				lcAsuntoDTE='Adjuntamos Nota de Abono ...   '
 			OTHERWISE
 			lcAsuntoDTE='Mensaje ...   '
 		ENDCASE 
@@ -43609,7 +43892,72 @@ FUNCTION ValidarInventariosAutoriza()
 	RETURN .t.
 ENDFUNC 
 
+FUNCTION ValidarventasEnvio()
+	USE pcSysDir+pcdb+'\cyvventas' share again IN 0
+	SELECT cyvventas
+	llexiste=.f.
+	FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
+	   IF ALLTRIM(FIELD(gnCount))=="IDENVIO"  && Display each field
+			llexiste=.T.
+	   ENDIF
+	NEXT
+	USE IN cyvventas
 
+	IF !llexiste
+
+		USE pcSysDir+pcdb+'\cyvventas' EXCLUSIVE IN 0
+		ALTER table cyvventas ADD COLUMN idenvio i DEFAULT 0
+		USE cyvventas
+
+		WAIT CLEAR
+	ENDIF
+	RETURN .t.
+ENDFUNC
+
+FUNCTION ValidarUsuariosIA()
+	LOCAL llExisteEsIA,llExisteEsIAMercadeo,llExisteEsIAVentas,llExisteEsIASoporte,lcCampo
+	llExisteEsIA=.F.
+	llExisteEsIAMercadeo=.F.
+	llExisteEsIAVentas=.F.
+	llExisteEsIASoporte=.F.
+	USE pcSysDir+pcdb+'\sisusuarios' share again IN 0
+	SELECT sisusuarios
+	FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
+		lcCampo=UPPER(ALLTRIM(FIELD(gnCount)))
+		DO CASE
+			CASE lcCampo=="ES_IA"
+				llExisteEsIA=.T.
+			CASE lcCampo=="ES_IA_MERCADEO"
+				llExisteEsIAMercadeo=.T.
+			CASE lcCampo=="ES_IA_VENTAS"
+				llExisteEsIAVentas=.T.
+			CASE lcCampo=="ES_IA_SOPORTE"
+				llExisteEsIASoporte=.T.
+		ENDCASE
+	NEXT
+	USE IN sisusuarios
+
+	IF !llExisteEsIA OR !llExisteEsIAMercadeo OR !llExisteEsIAVentas OR !llExisteEsIASoporte
+
+		USE pcSysDir+pcdb+'\sisusuarios' EXCLUSIVE IN 0
+		IF !llExisteEsIA
+			ALTER table sisusuarios ADD COLUMN es_ia i DEFAULT 0
+		ENDIF
+		IF !llExisteEsIAMercadeo
+			ALTER table sisusuarios ADD COLUMN es_ia_mercadeo i DEFAULT 0
+		ENDIF
+		IF !llExisteEsIAVentas
+			ALTER table sisusuarios ADD COLUMN es_ia_ventas i DEFAULT 0
+		ENDIF
+		IF !llExisteEsIASoporte
+			ALTER table sisusuarios ADD COLUMN es_ia_soporte i DEFAULT 0
+		ENDIF
+		USE IN sisusuarios
+
+		WAIT CLEAR
+	ENDIF
+	RETURN .t.
+ENDFUNC
 
 
 * Devuelve un cursor con un solo campo: iddocto.
