@@ -21,6 +21,8 @@ Corregir de forma permanente la anulacion de ventas y la liberacion visual de su
 
 - Regresion localizada el 2026-11-02: `cboStatus` no tiene `ControlSource`; al anular, detalle y kardex recibian `status=0`, pero `c_cyvventas.status` podia conservar `1` y el `UPDATE` posterior reactivaba silenciosamente la cabecera.
 - `frm_ven_ventas_mod.grabar` sincroniza ahora `c_cyvventas.status=0` antes del checkpoint de cabecera. La FACV `00074072` evidencio el caso (cabecera activa, detalle y kardex inactivos); se dejo intacta y no se repararon datos reales.
+- Segunda causa confirmada: como `c_cyvventas` usa buffering, el `UPDATE ... FROM c_cyvventas` no veia el `REPLACE` pendiente y volvia a copiar `status=1`. La rama nativa que solo se ejecuta al anular fija ahora `status=0` directamente. FACV `00074060` y `00074061` evidenciaron el residuo; se dejaron intactas.
+- Respaldo adicional: `respaldos_codex/anulacion_status_buffer_20261102-151000`. Formulario `COMPILE_OK` (47/47) y contrato `VERIFY_OK`.
 - Respaldo de fuente: `respaldos_codex/anulacion_status_cursor_20261102-152000`. Formulario aislado `COMPILE_OK` (47/47 procedimientos), contrato de anulacion `VERIFY_OK` y reconstruccion integral `principal.exe` PASS (36,263,651 bytes; SHA-256 `1CAEB2B63DD000D6259BB734BC2FE3CAA5D029F7646A22CA2C8A768FBE3F9671`).
 - La integracion habia reemplazado el alias exacto `cyvventas` por alias alternativos dentro de `ConfirmarCabeceraAnulacionVenta`, `ConfirmarCabeceraEliminacionVenta` y `ConfirmarCabeceraAnulacionFiscalVenta`.
 - Los triggers de ventas esperan el alias exacto `cyvventas`; por eso SIGA alcanzaba a desactivar detalle y kardex, pero no confirmaba la cabecera ni mostraba un error util.
