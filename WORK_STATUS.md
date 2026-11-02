@@ -7,6 +7,12 @@ Rama: `feature/modulo-facturacion`
 
 Corregir de forma permanente la anulacion de ventas y la liberacion visual de sus pedidos desde SIGA, recompilar `principal.exe` y conservar intactos los cambios locales ajenos.
 
+## Pausa para reinicio 2026-11-02
+
+- Ultima correccion guardada y sincronizada: commit `a3ece8f5`. En la rama nativa de anulacion, la cabecera recibe `status=0` directamente; ya no vuelve a leer `status=1` desde `c_cyvventas` con buffering. Formulario `COMPILE_OK` y contrato `VERIFY_OK`.
+- Estado real dejado intacto: FACV `00074060` y `00074061` tienen cabecera activa pero detalle inactivo; requieren reparacion controlada. FACV `00074062` sigue activa y no entro al intento. No volver a anular 74060/74061 como documentos normales.
+- Siguiente paso exacto al reiniciar: ejecutar nuevamente el proyecto SIGA, probar una sola factura activa distinta de los casos parciales y verificar cabecera/detalle/kardex. Solo despues revisar la anulacion por seleccion multiple y el refresco/recorrido del listado.
+
 ## Cambios integrados
 
 - Se integraron los 18 commits pendientes de `fork/feature/modulo-facturacion` con los tres commits locales de cierre.
