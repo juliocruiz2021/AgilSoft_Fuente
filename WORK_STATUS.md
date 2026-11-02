@@ -9,6 +9,7 @@ Corregir de forma permanente la anulacion de ventas y la liberacion visual de su
 
 ## Pausa para reinicio 2026-11-02
 
+- Diagnostico de compilacion 16:44: `frm_ven_ventas_mod.scx` compilo aislado `COMPILE_OK` y regenero su SCT exactamente igual al blob versionado `1cd2c49d`; respaldo previo en `respaldos_codex/diagnostico_sct_20261102-164500`. La reconstruccion integral no inicio porque `Programas/sistema.pjx` respondio `ERROR 3: El archivo ya esta en uso` en la linea 19 del finalizador; `principal.exe` no se reemplazo. Tras reiniciar, confirmar que no exista otro VFP y repetir la reconstruccion integral.
 - Ultima correccion guardada y sincronizada: commit `a3ece8f5`. En la rama nativa de anulacion, la cabecera recibe `status=0` directamente; ya no vuelve a leer `status=1` desde `c_cyvventas` con buffering. Formulario `COMPILE_OK` y contrato `VERIFY_OK`.
 - Estado real dejado intacto: FACV `00074060` y `00074061` tienen cabecera activa pero detalle inactivo; requieren reparacion controlada. FACV `00074062` sigue activa y no entro al intento. No volver a anular 74060/74061 como documentos normales.
 - Siguiente paso exacto al reiniciar: ejecutar nuevamente el proyecto SIGA, probar una sola factura activa distinta de los casos parciales y verificar cabecera/detalle/kardex. Solo despues revisar la anulacion por seleccion multiple y el refresco/recorrido del listado.
