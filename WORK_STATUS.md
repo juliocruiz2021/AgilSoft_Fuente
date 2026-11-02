@@ -5,7 +5,7 @@ Rama: `feature/modulo-facturacion`
 
 ## Objetivo actual
 
-Corregir de forma permanente la anulacion de ventas desde SIGA, recompilar `principal.exe` y conservar intactos los cambios locales ajenos.
+Corregir de forma permanente la anulacion de ventas y la liberacion visual de sus pedidos desde SIGA, recompilar `principal.exe` y conservar intactos los cambios locales ajenos.
 
 ## Cambios integrados
 
@@ -25,6 +25,13 @@ Corregir de forma permanente la anulacion de ventas desde SIGA, recompilar `prin
 - Las facturas DIPRO FACV `00074070`/ID `112421742` y `00074071`/ID `112421768`, afectadas por el intento desde SIGA, se completaron mediante los workers oficiales de la API y pasaron el verificador integral.
 - Respaldo verificable de sus registros: `D:\Desarrollo_.net\apisigavfp\respaldos_codex\void_invoices_74070_74071_20261102-1332`.
 - FACV `00074069`/ID `112421640` tambien aparece parcialmente afectada por un intento anterior; se dejo intacta por no formar parte de la autorizacion actual.
+
+## Pedidos liberados tras anular factura
+
+- Los pedidos DIPRO `00322688`/ID `112421706` y `00322689`/ID `112421726` estaban activos y todas sus lineas tenian `siskardex.cantidadpedido=0`; no requerian reparacion de datos.
+- `CrearCursorPendientesDocto` seguia restando facturas anuladas porque solo comprobaba `eliminado=0`. Ahora consume cantidades unicamente cuando la linea de factura tiene `status=1` y su cabecera tiene `status=1`, `anulado=0` y `eliminado=0`.
+- Regresion sobre el respaldo aislado de las dos facturas: la consulta anterior retenia 26 vinculos/56.5 unidades; la corregida retiene cero. PASS.
+- No se modificaron DBF reales durante esta correccion; solo se realizaron lecturas y pruebas sobre el respaldo.
 
 ## Correccion DBC v2
 
@@ -51,6 +58,9 @@ Corregir de forma permanente la anulacion de ventas desde SIGA, recompilar `prin
 - Construccion integral nueva de `principal.exe`: PASS, 36,263,299 bytes, SHA-256 `3FA681B120DEC9C6A131CCC96BE9FDEEA6E81BB0D65316243E77DD36A375BEDE` y sin `.err`.
 - Verificacion x86 posterior: FACV `00074070` y `00074071` tienen cabecera `status=0` y cero detalles, movimientos de inventario o kardex-documento activos.
 - Respaldo previo a compilar: `.codex-work/backup_void_fix_20261102-133501`.
+- Respaldo previo a la correccion del listado: `respaldos_codex/pedidos_pendientes_facturas_anuladas_20261102-134244`.
+- Compilacion integral final: PASS, 550 miembros, `Programas/varios.fxp` de 1,296,254 bytes y sin `.err`.
+- `principal.exe` final: 36,263,358 bytes; SHA-256 `64FF13E6E9C841447B078A986F1FF0BD7943F1E3F1942EE96D9799DC975992EC`.
 
 ## Decisiones
 
@@ -60,4 +70,4 @@ Corregir de forma permanente la anulacion de ventas desde SIGA, recompilar `prin
 
 ## Siguiente paso exacto
 
-Abrir el `principal.exe` nuevo, refrescar Facturacion y hacer una prueba controlada creando y anulando una venta no DTE desde SIGA; confirmar que la cabecera y sus efectos queden inactivos en una sola operacion.
+Abrir el `principal.exe` nuevo y refrescar Pedidos: `00322688` y `00322689` deben volver a aparecer como pendientes. Luego hacer una prueba controlada creando y anulando una venta no DTE desde SIGA, sin que Codex anule documentos reales.
