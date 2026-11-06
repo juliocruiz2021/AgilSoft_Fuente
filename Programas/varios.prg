@@ -2930,7 +2930,7 @@ pcRastrear=pcRastrear+'Imprimir Fac- 1 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						"t5.serie,t5.prefijo,t5.tiraje,t5.resolucion,t5.autorizacion,t5.fecatuorizacion,"+;
 						"t7.cod as coddepartamento,t7.nombre as departamento,t8.cod as codmunicipio,t8.nombre as municipio,"+;
 						"t9.cod as codSucursal,t9.nombre as sucursal,t9.notas as direccionsuc,t9.codDepartamento as codDepartamentoSuc,t9.codMunicipio as codMunicipioSuc,t9.telefono as telefonosuc,t9.correo as correosuc,"+;
-						"t10.codcajban,t10.cajban,t10.cuenta,t10.tipocajban,t11.unidadmedida,t11.codoriginal,t13.codclipro,t13.correodte,"+;
+						"t10.codcajban,t10.cajban,t10.cuenta,t10.tipocajban,t11.unidadmedida,t11.codoriginal,t13.codclipro,t13.correodte,t13.telefono,"+;
 						"t13.nombre as nombrecomercialclipro,pcnomempresa as nomempresa,pcgiro as giroempresa,pcnit as nitempresa,pcnrc as nrcempresa, "+;
 						"t12.fecultilectura,t12.ultimalectura,t12.fecha as fechalectura,t12.lectura,t12.consumo,"+;
 						"t14.codtarifa,t13.saldo as saldoclipro,t13.saldo as saldocliprov,"+;
@@ -2976,7 +2976,7 @@ pcRastrear=pcRastrear+'Imprimir Fac- 1 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 						"t5.serie,t5.prefijo,t5.tiraje,t5.resolucion,t5.autorizacion,t5.fecatuorizacion,"+;
 						"t7.cod as coddepartamento,t7.nombre as departamento,t8.cod as codmunicipio,t8.nombre as municipio,"+;
 						"t9.cod as codSucursal,t9.nombre as sucursal,t9.notas as direccionsuc,t9.codDepartamento as codDepartamentoSuc,t9.codMunicipio as codMunicipioSuc,t9.telefono as telefonosuc,t9.correo as correosuc,"+;
-						"t10.codcajban,t10.cajban,t10.cuenta,t10.tipocajban,t11.unidadmedida,t11.codoriginal,t13.codclipro,t13.correodte,"+;
+						"t10.codcajban,t10.cajban,t10.cuenta,t10.tipocajban,t11.unidadmedida,t11.codoriginal,t13.codclipro,t13.correodte,t13.telefono,"+;
 						"t13.nombre as nombrecomercialclipro,pcnomempresa as nomempresa,pcgiro as giroempresa,pcnit as nitempresa,pcnrc as nrcempresa, "+;
 						"t12.fecultilectura,t12.ultimalectura,t12.fecha as fechalectura,t12.lectura,t12.consumo,"+;
 						"t14.codtarifa,t13.saldo as saldoclipro,t13.saldo as saldocliprov,"+;
@@ -3874,13 +3874,13 @@ pcRastrear=pcRastrear+'Imprimir Fac- 7 -'+STR(DATETIME()-ptTiempoRastreo,16,6)+C
 										IF (EMPTY(lcCelNum) OR '70000000'$lcCelNum) AND INLIST(lnCtrl,5,6)
 											IF INLIST(lnCtrl,5,6)   &&&&& se genera pero no se envia
 												=GenerarArchivoPDF_DTE(pcSysDir+pcdb+"\formatos\"+IIF(EMPTY(lcFormatoPDF),lcArchivo,lcFormatoPDF),;
-																lcNombreArchivoPdF)
+																lcNombreArchivoPdF,lnCtrl=7)
 											ENDIF 
 											WAIT WINDOW 'Envio de Whasapp desactivado.... ' TIMEOUT 1
 										ELSE 
 
 											=GenerarArchivoPDF_DTE(pcSysDir+pcdb+"\formatos\"+IIF(EMPTY(lcFormatoPDF),lcArchivo,lcFormatoPDF),;
-																lcNombreArchivoPdF)
+																lcNombreArchivoPdF,lnCtrl=7)
 
 											IF lnCtrl=6
 												EnviarPorWhatsApp(lcNombreArchivoPdF,lcNumeroCelularPDF,3,lcAsuntoWS,lcMensajeWS)
@@ -7462,6 +7462,7 @@ FUNCTION _BuscarIdClientePorCodigo(lnIdSqlConec,lcCodCliBus)
 ENDFUNC
 
 FUNCTION _idCuentaUtilidadOperdidaEjercicio(lnIdSqlConec,ldFecEjer)			&&&& no se cambia por que se ha de usar en varios lados
+	lcDetallePartidasReporte=IIF(USED("c_reportPartidas"),"c_reportPartidas","ctbpartidasdeta")
 	lcAliBusAyu=ALIAS()
 	lnRetorCtaUtilPer=0
 	
@@ -7474,7 +7475,7 @@ FUNCTION _idCuentaUtilidadOperdidaEjercicio(lnIdSqlConec,ldFecEjer)			&&&& no se
 	
 	IF lnIdSqlConec>0	&&&& Coneccion Establecida
 		lcComandoBuscarCta="SELECT SUM(debe-haber) as UtilidadPerdia "+;
-								"FROM ctbpartidasdeta a "+;
+								"FROM "+lcDetallePartidasReporte+" a "+;
 										"inner join ctbpartidas b on a.idpartida=b.idpartida "+;
 										"Inner join ctbcuentas c on a.idcuenta=c.idcuenta "+;
 								"where c.idtipocuenta>=400 and c.idtipocuenta<=699 "+ lcFiltroFecha
@@ -7509,6 +7510,7 @@ ENDFUNC
 
 
 FUNCTION _idCuentaUtilidadOperdidaEjercicioAnterior(lnIdSqlConec,ldFecEjer)
+	lcDetallePartidasReporte=IIF(USED("c_reportPartidas"),"c_reportPartidas","ctbpartidasdeta")
 	lcAliBusAyu=ALIAS()
 	lnRetorCtaUtilPer=0
 	
@@ -7521,7 +7523,7 @@ FUNCTION _idCuentaUtilidadOperdidaEjercicioAnterior(lnIdSqlConec,ldFecEjer)
 	
 	IF lnIdSqlConec>0	&&&& Coneccion Establecida
 		lcComandoBuscarCta="SELECT SUM(debe-haber) as UtilidadPerdia "+;
-								"FROM ctbpartidasdeta a "+;
+								"FROM "+lcDetallePartidasReporte+" a "+;
 										"inner join ctbpartidas b on a.idpartida=b.idpartida "+;
 										"Inner join ctbcuentas c on a.idcuenta=c.idcuenta "+;
 								"where c.idtipocuenta>=400 and c.idtipocuenta<=699 "+ lcFiltroFecha
@@ -7558,6 +7560,7 @@ ENDFUNC
 
 
 FUNCTION _idCuentaUtilidadOperdidaEjercicioPeriodo(lnIdSqlConec,ldFecEjer,ldFecEjer2)
+	lcDetallePartidasReporte=IIF(USED("c_reportPartidas"),"c_reportPartidas","ctbpartidasdeta")
 	lcAliBusAyu=ALIAS()
 	lnRetorCtaUtilPer=0
 	
@@ -7570,7 +7573,7 @@ FUNCTION _idCuentaUtilidadOperdidaEjercicioPeriodo(lnIdSqlConec,ldFecEjer,ldFecE
 	
 	IF lnIdSqlConec>0	&&&& Coneccion Establecida
 		lcComandoBuscarCta="SELECT SUM(debe-haber) as UtilidadPerdia "+;
-								"FROM ctbpartidasdeta a "+;
+								"FROM "+lcDetallePartidasReporte+" a "+;
 										"inner join ctbpartidas b on a.idpartida=b.idpartida "+;
 										"Inner join ctbcuentas c on a.idcuenta=c.idcuenta "+;
 								"where c.idtipocuenta>=400 and c.idtipocuenta<=699 "+ lcFiltroFecha
@@ -8201,8 +8204,8 @@ FUNCTION _generaPartidaInventarios(lnsqlid,lnidDoc,lnTipConec)
 			
 			***** detalle de inventario   jrjrjr
 			SELECT t0.iddocto,IIF(NVL(t3.ctainvent,0)=0,IIF(NVL(t5.ctainvent,0)=0,pnCtaInvent,t5.ctainvent),t3.ctainvent) as idcuenta,t4.tipodocto,;
-									IIF(t0.entsal=1,IIF(t0.status=0 OR t0.eliminado=1,0000000000.00000000,t0.costototal),0000000000.00000000) as debe,;
-									IIF(t0.entsal=1,0000000000.00000000,IIF(t0.status=0 OR t0.eliminado=1,0000000000.00000000,t0.costototal)) as haber,;
+									IIF(t0.entsal=1,IIF(t0.status=0 OR t0.eliminado=1 OR t1.status=0 OR t1.eliminado=1 OR t1.anulado=1,0000000000.00000000,t0.costototal),0000000000.00000000) as debe,;
+									IIF(t0.entsal=1,0000000000.00000000,IIF(t0.status=0 OR t0.eliminado=1 OR t1.status=0 OR t1.eliminado=1 OR t1.anulado=1,0000000000.00000000,t0.costototal)) as haber,;
 									t1.periodo,'INV' as origen,t4.tipoconta,;
 									IIF(t0.entsal=1,1,2) as idorigen,t1.fecalta,t1.fecmod,pcnodo as nodo,;
 									IIF(t0.entsal=3,t1.idsucursaltras,t1.idsucursal) as idsucursal,t1.idctrocosto,t4.idtipopar,t1.notas,;
@@ -8217,8 +8220,8 @@ FUNCTION _generaPartidaInventarios(lnsqlid,lnidDoc,lnTipConec)
 						UNION ALL ;
 						SELECT t0.iddocto,;
 									IIF(t0.entsal=3,IIF(NVL(t3.ctainvent,0)=0,IIF(NVL(t6.ctainvent,0)=0,pnCtaInvent,t6.ctainvent),t3.ctainvent),t4.idctactb) as idcuenta,t4.tipodocto,;
-									IIF(t0.entsal<>1,IIF(t0.status=0 OR t0.eliminado=1,0000000000.00000000,t0.costototal),0000000000.00000000) as debe,;
-									IIF(t0.entsal<>1,0000000000.00000000,IIF(t0.status=0 OR t0.eliminado=1,0000000000.00000000,t0.costototal)) as haber,;
+									IIF(t0.entsal<>1,IIF(t0.status=0 OR t0.eliminado=1 OR t1.status=0 OR t1.eliminado=1 OR t1.anulado=1,0000000000.00000000,t0.costototal),0000000000.00000000) as debe,;
+									IIF(t0.entsal<>1,0000000000.00000000,IIF(t0.status=0 OR t0.eliminado=1 OR t1.status=0 OR t1.eliminado=1 OR t1.anulado=1,0000000000.00000000,t0.costototal)) as haber,;
 									t1.periodo,'INV' as origen,t4.tipoconta,;
 									IIF(t0.entsal=1,2,1) as idorigen,t1.fecalta,t1.fecmod,pcnodo as nodo,;
 									t1.idsucursal,t1.idctrocosto,t4.idtipopar,t1.notas ,;
@@ -8436,7 +8439,7 @@ FUNCTION _generaPartidaCompras(lnsqlid,lnidDoc,lnTipConec)
 			*** si es una compra de contado se provisiona la renta si es de credito no se toma en cuenta la renta (esto sin efecto.. siempre se va provisionar)
 			SELECT t0.iddocto,t0.iddoctod,t0.idproducto,t2.idctaingcostos,(SELECT MAX(tipoiva) as tipoiva FROM cyvComprasdeta WHERE iddocto=lnidDoc) as tipoiva,;
 						t1.tiporetper,t1.ctrolcom,t1.periodo,t0.origen,t1.idsucursal,t0.idctrocosto,t1.idctrocosto as idctrocostoSuc,t1.idcajban,;
-						t0.status,t0.eliminado,t0.tipoprod,t1.condipago,t0.costototal,;
+						t0.status,t0.eliminado,t1.status as statusenc,t1.eliminado as eliminadoenc,t1.anulado,t0.tipoprod,t1.condipago,t0.costototal,;
 						t1.rentadocto,t1.FovialDocto,T1.CotransDocto,t1.ivadocto,t1.cescdocto,t1.retperdocto,t1.totaldocto,t1.percepccliq,t1.numeroccliq,;
 						IIF(t1.condipago=0,NVL(t6.idctacajban1,000000000),IIF(NVL(t5.ctacliloc,0)=0,IIF(t5.extranjero=0,NVL(pnctaprvloc,000000000),NVL(pnctaprvext,000000000)),t5.ctacliloc)) as idcuentaPago,;
 						NVL(pnctaRenta,0000000000) as idcuentaRenta,NVL(pnctaFovial,0000000000) as idcuentaFovial,NVL(pnctaCotrans,0000000000) as idcuentaCotrans,;
@@ -8485,7 +8488,7 @@ FUNCTION _generaPartidaCompras(lnsqlid,lnidDoc,lnTipConec)
 
 			lnCtrolComPart=c_PartTmp.ctrolcom
 			lntiporetperPart=c_PartTmp.tiporetper
-			lnStatusPart=c_PartTmp.status
+			lnStatusPart=IIF(NVL(c_PartTmp.anulado,0)=1 OR NVL(c_PartTmp.eliminadoenc,0)=1 OR NVL(c_PartTmp.statusenc,0)<=0 OR NVL(c_PartTmp.eliminado,0)=1 OR NVL(c_PartTmp.status,0)<=0,0,c_PartTmp.statusenc)
 			lcTipPar=ALLTRIM(TipPar)
 			DIMENSION laDescuadrada [1,1]
 			laDescuadrada(1)=0
@@ -9021,7 +9024,7 @@ FUNCTION _generaPartidaventas(lnsqlid,lnidDoc,lnTipConec)
 			*** si es una venta de contado se provisiona la renta si es de credito no se toma en cuenta la renta(Esto ya no es asi.. contado o credito se aplica la renta)
 			SELECT t0.iddocto,t0.iddoctod,t0.idproducto,(SELECT MAX(tipoiva) as tipoiva FROM cyvventasdeta WHERE iddocto=lnidDoc) as tipoiva,;
 						t1.tiporetper,t1.ctrolvta,t1.periodo,t0.origen,t1.idsucursal,t0.idctrocosto,t1.idctrocosto as idctrocostoSuc,t2.idfamilia,t1.idcajban,;
-						t0.status,t0.eliminado,t0.tipoprod,t1.condipago,t0.totalventasiniva,t0.costototal,t1.entsal,;
+						t0.status,t0.eliminado,t1.status as statusenc,t1.eliminado as eliminadoenc,t1.anulado,t0.tipoprod,t1.condipago,t0.totalventasiniva,t0.costototal,t1.entsal,;
 						IIF(NVL(t7.ctapropina1,0)=0,NVL(pnCtaPropina1,0000000000),t7.ctapropina1) as ctaPropi1,IIF(NVL(t7.ctapropina2,0)=0,NVL(pnCtaPropina2,000000000),t7.ctapropina2) as ctaPropi2,;
 						t1.rentadocto,t1.FovialDocto,T1.CotransDocto,t1.ivadocto,t1.cescdocto,t1.retperdocto,t1.propina,t1.totaldocto,t1.percepccliq,t1.numeroccliq,;
 						IIF(NVL(t3.ctainvent,000000000)=0,IIF(NVL(t7.ctainvent,000000000)=0,NVL(pnctainvent,0000000000),t7.ctainvent),t3.ctainvent) as idcuentaInvent,;
@@ -9074,7 +9077,7 @@ FUNCTION _generaPartidaventas(lnsqlid,lnidDoc,lnTipConec)
 			lnctrolvtaPart=c_PartTmp.ctrolvta
 			lnctrolinvPart=c_PartTmp.ctrolinv
 			lntiporetperPart=c_PartTmp.tiporetper
-			lnStatusPart=c_PartTmp.status
+			lnStatusPart=IIF(NVL(c_PartTmp.anulado,0)=1 OR NVL(c_PartTmp.eliminadoenc,0)=1 OR NVL(c_PartTmp.statusenc,0)<=0 OR NVL(c_PartTmp.eliminado,0)=1 OR NVL(c_PartTmp.status,0)<=0,0,c_PartTmp.statusenc)
 			lcpresupuestogano=ALLTRIM(c_PartTmp.presupuesto)
 			lcCicloGano=ALLTRIM(c_PartTmp.ciclo)
 			
@@ -16062,6 +16065,194 @@ FUNCTION ValidarVentasPago()
 ENDFUNC 
 
 
+
+********************************************************************
+* Deja sin efecto economico la partida de un documento anulado o
+* eliminado. Se ejecuta dentro de la misma transaccion del formulario.
+********************************************************************
+FUNCTION _PonerPartidaDocumentoCero
+	LPARAMETERS tnIdDocumento, tcOrigen, tnTipoConexion, tnIdSql
+
+	LOCAL lcAliasAnterior, lcOrigen, lcPcUsuario, lcComando
+	LOCAL lnIdUsuario, lcNodo, ltFecha, lnResultado1, lnResultado2
+	LOCAL llAbrioPartidas, llAbrioDetalle, llResultado, loError
+
+	IF VARTYPE(tnIdDocumento) <> "N" OR tnIdDocumento = 0 OR ;
+			VARTYPE(tcOrigen) <> "C" OR EMPTY(ALLTRIM(tcOrigen))
+		RETURN .F.
+	ENDIF
+
+	lcOrigen = UPPER(ALLTRIM(tcOrigen))
+	ltFecha = DATETIME()
+	lnIdUsuario = 0
+	IF TYPE("pnidusuario") = "N"
+		lnIdUsuario = pnidusuario
+	ENDIF
+	lcNodo = ""
+	IF TYPE("pcnodo") = "C"
+		lcNodo = ALLTRIM(pcnodo)
+	ENDIF
+	lcPcUsuario = STRTRAN(SYS(0), "'", "''")
+	llResultado = .T.
+
+	IF VARTYPE(tnTipoConexion) = "N" AND tnTipoConexion = 1
+		lcAliasAnterior = ALIAS()
+		STORE .F. TO llAbrioPartidas, llAbrioDetalle
+		TRY
+			IF !USED("ctbpartidas")
+				USE pcSysDir + pcdb + "\ctbpartidas" SHARED AGAIN ;
+					IN 0 ALIAS ctbpartidas
+				llAbrioPartidas = .T.
+			ENDIF
+			IF !USED("ctbpartidasdeta")
+				USE pcSysDir + pcdb + "\ctbpartidasdeta" SHARED AGAIN ;
+					IN 0 ALIAS ctbpartidasdeta
+				llAbrioDetalle = .T.
+			ENDIF
+
+			UPDATE ctbpartidas ;
+				SET monto = 0, fecmod = ltFecha, iduser = lnIdUsuario, ;
+					pcuser = SYS(0), nodo = lcNodo ;
+				WHERE idpartida = tnIdDocumento AND ;
+					UPPER(ALLTRIM(origen)) = lcOrigen
+			UPDATE ctbpartidasdeta ;
+				SET debe = 0, haber = 0, fecmod = ltFecha, ;
+					iduser = lnIdUsuario, pcuser = SYS(0), nodo = lcNodo ;
+				WHERE idpartida = tnIdDocumento AND ;
+					UPPER(ALLTRIM(origen)) = lcOrigen
+		CATCH TO loError
+			llResultado = .F.
+		FINALLY
+			IF llAbrioDetalle AND USED("ctbpartidasdeta")
+				USE IN ctbpartidasdeta
+			ENDIF
+			IF llAbrioPartidas AND USED("ctbpartidas")
+				USE IN ctbpartidas
+			ENDIF
+			IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+				SELECT (lcAliasAnterior)
+			ENDIF
+		ENDTRY
+	ELSE
+		IF VARTYPE(tnIdSql) <> "N" OR tnIdSql <= 0
+			RETURN .F.
+		ENDIF
+		lcComando = "UPDATE ctbpartidas SET monto=0,fecmod='" + ;
+			_ConvertirToFechaHoraSQL(ltFecha) + "',iduser=" + ;
+			ALLTRIM(STR(lnIdUsuario)) + ",pcuser='" + lcPcUsuario + ;
+			"',nodo='" + STRTRAN(lcNodo, "'", "''") + ;
+			"' WHERE idpartida=" + ALLTRIM(STR(tnIdDocumento)) + ;
+			" AND UPPER(TRIM(origen))='" + STRTRAN(lcOrigen, "'", "''") + "'"
+		lnResultado1 = miSQLEXEC(tnIdSql, lcComando, "c_partida_cero")
+
+		lcComando = "UPDATE ctbpartidasdeta SET debe=0,haber=0,fecmod='" + ;
+			_ConvertirToFechaHoraSQL(ltFecha) + "',iduser=" + ;
+			ALLTRIM(STR(lnIdUsuario)) + ",pcuser='" + lcPcUsuario + ;
+			"',nodo='" + STRTRAN(lcNodo, "'", "''") + ;
+			"' WHERE idpartida=" + ALLTRIM(STR(tnIdDocumento)) + ;
+			" AND UPPER(TRIM(origen))='" + STRTRAN(lcOrigen, "'", "''") + "'"
+		lnResultado2 = miSQLEXEC(tnIdSql, lcComando, "c_partida_deta_cero")
+		llResultado = lnResultado1 > 0 AND lnResultado2 > 0
+	ENDIF
+
+	RETURN llResultado
+ENDFUNC
+
+********************************************************************
+* Prepara el detalle contable para reportes sin efecto economico de
+* documentos anulados o eliminados. No modifica las tablas reales.
+********************************************************************
+********************************************************************
+* Filtro para consultas contables ejecutadas directamente en SQL.
+* Excluye el efecto de cualquier cabecera fuente inactiva.
+********************************************************************
+FUNCTION _FiltroPartidaContableActivaSQL
+	LPARAMETERS tcAliasDetalle, tcAliasPartida
+	LOCAL lcD, lcP, lcFiltro
+
+	lcD=ALLTRIM(tcAliasDetalle)
+	lcP=ALLTRIM(tcAliasPartida)
+	IF EMPTY(lcD) OR EMPTY(lcP)
+		RETURN "1=0"
+	ENDIF
+
+	lcFiltro="COALESCE("+lcD+".eliminado,0)=0 AND COALESCE("+lcP+".eliminado,0)=0 "+;
+		"AND NOT EXISTS (SELECT 1 FROM cybmovimientos z WHERE z.iddocto="+lcP+".idpartida "+;
+		"AND UPPER(TRIM("+lcP+".origen))='CYB' AND (COALESCE(z.status,0)=0 OR COALESCE(z.anulado,0)<>0 OR COALESCE(z.eliminado,0)<>0)) "+;
+		"AND NOT EXISTS (SELECT 1 FROM cyvventas z WHERE z.iddocto="+lcP+".idpartida "+;
+		"AND UPPER(TRIM("+lcP+".origen))='VTA' AND (COALESCE(z.status,0)=0 OR COALESCE(z.anulado,0)<>0 OR COALESCE(z.eliminado,0)<>0)) "+;
+		"AND NOT EXISTS (SELECT 1 FROM cyvcompras z WHERE z.iddocto="+lcP+".idpartida "+;
+		"AND UPPER(TRIM("+lcP+".origen))='COM' AND (COALESCE(z.status,0)=0 OR COALESCE(z.anulado,0)<>0 OR COALESCE(z.eliminado,0)<>0)) "+;
+		"AND NOT EXISTS (SELECT 1 FROM invinventarios z WHERE z.iddocto="+lcP+".idpartida "+;
+		"AND UPPER(TRIM("+lcP+".origen))='INV' AND (COALESCE(z.status,0)=0 OR COALESCE(z.anulado,0)<>0 OR COALESCE(z.eliminado,0)<>0)) "+;
+		"AND NOT EXISTS (SELECT 1 FROM cyvcuentasxcp z WHERE z.iddocto="+lcP+".idpartida "+;
+		"AND UPPER(TRIM("+lcP+".origen)) IN ('CXC','CXP') AND (COALESCE(z.status,0)=0 OR COALESCE(z.anulado,0)<>0 OR COALESCE(z.eliminado,0)<>0))"
+
+	RETURN lcFiltro
+ENDFUNC
+
+FUNCTION PrepararDetallePartidasReportes
+	LPARAMETERS pdHasta
+	LOCAL llResultado, lcAliasAnterior, loError
+
+	llResultado = .F.
+	lcAliasAnterior = ALIAS()
+	IF VARTYPE(pdHasta) <> "D" OR EMPTY(pdHasta)
+		RETURN .F.
+	ENDIF
+
+	TRY
+		IF USED("c_reportPartidas")
+			USE IN c_reportPartidas
+		ENDIF
+
+		* La fila se conserva para auditoria, pero sin Debe/Haber.
+		SELECT d.* ;
+			FROM ctbpartidasdeta d ;
+			INNER JOIN (SELECT p.idpartida,p.origen,p.fechapartida ;
+				FROM ctbpartidas p ;
+				WHERE p.origen<>"CYB" AND p.fechapartida<=m.pdHasta ;
+				UNION ALL ;
+				SELECT z.iddocto AS idpartida,z.origen,z.fechadocto AS fechapartida ;
+				FROM cybmovimientos z ;
+				WHERE z.fechadocto<=m.pdHasta) h ;
+			ON d.idpartida=h.idpartida AND d.origen=h.origen ;
+			INTO CURSOR c_reportPartidas READWRITE
+
+		REPLACE debe WITH 0, haber WITH 0 FOR NVL(eliminado,0)<>0 IN c_reportPartidas
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM ctbpartidas p ;
+			WHERE c_reportPartidas.idpartida=p.idpartida ;
+			AND c_reportPartidas.origen=p.origen AND NVL(p.eliminado,0)<>0
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cybmovimientos z ;
+			WHERE c_reportPartidas.idpartida=z.iddocto AND c_reportPartidas.origen=z.origen ;
+			AND (NVL(z.status,0)=0 OR NVL(z.anulado,0)<>0 OR NVL(z.eliminado,0)<>0)
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvventas v ;
+			WHERE c_reportPartidas.idpartida=v.iddocto AND c_reportPartidas.origen=v.origen ;
+			AND (NVL(v.status,0)=0 OR NVL(v.anulado,0)<>0 OR NVL(v.eliminado,0)<>0)
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvcompras c ;
+			WHERE c_reportPartidas.idpartida=c.iddocto AND c_reportPartidas.origen=c.origen ;
+			AND (NVL(c.status,0)=0 OR NVL(c.anulado,0)<>0 OR NVL(c.eliminado,0)<>0)
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM invinventarios i ;
+			WHERE c_reportPartidas.idpartida=i.iddocto AND c_reportPartidas.origen=i.origen ;
+			AND (NVL(i.status,0)=0 OR NVL(i.anulado,0)<>0 OR NVL(i.eliminado,0)<>0)
+		UPDATE c_reportPartidas SET debe=0,haber=0 FROM cyvcuentasxcp x ;
+			WHERE c_reportPartidas.idpartida=x.iddocto AND c_reportPartidas.origen=x.origen ;
+			AND (NVL(x.status,0)=0 OR NVL(x.anulado,0)<>0 OR NVL(x.eliminado,0)<>0)
+
+		llResultado = .T.
+	CATCH TO loError
+		IF USED("c_reportPartidas")
+			USE IN c_reportPartidas
+		ENDIF
+		llResultado = .F.
+	FINALLY
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN llResultado
+ENDFUNC
 
 FUNCTION ValidarPartidasAnuladas()
 	IF pntipoconeccion=1 
@@ -38152,48 +38343,123 @@ ENDFUNC
 
 
 
-******* tablas para equilub marilin
-FUNCTION _ValidarCicloyReferenciaCompras()
-	USE pcSysDir+pcdb+'\cyvcompras' share again IN 0
-	SELECT cyvcompras
-	llexiste=.f.
-	FOR gnCount = 1 TO FCOUNT( )  && Loop for number of fields
-	   IF ALLTRIM(FIELD(gnCount))=="PRESUPUESTO"  && Display each field
-			llexiste=.T.
-	   ENDIF 
-	NEXT
-	USE IN cyvcompras
-	IF !llexiste
-		USE pcSysDir+pcdb+'\cyvcompras' EXCLUSIVE IN 0
-		ALTER table cyvcompras ADD COLUMN presupuesto c(20) DEFAULT ''
-		ALTER table cyvcompras ADD COLUMN ciclo c(20) DEFAULT ''
-		USE IN cyvcompras
-	
-		USE pcSysDir+pcdb+'\cyvventas' EXCLUSIVE IN 0
-		ALTER table cyvventas ADD COLUMN presupuesto c(20) DEFAULT ''
-		ALTER table cyvventas ADD COLUMN ciclo c(20) DEFAULT ''
-		USE IN cyvventas
-		
-		USE pcSysDir+pcdb+'\ctbpartidas' EXCLUSIVE IN 0
-		ALTER table ctbpartidas ADD COLUMN presupuesto c(20) DEFAULT ''
-		ALTER table ctbpartidas ADD COLUMN ciclo c(20) DEFAULT ''
-		USE IN ctbpartidas
+FUNCTION _ValidarCicloyReferenciaCompras
+    LOCAL lcBase, llResultado
 
-		USE pcSysDir+pcdb+'\cybmovimientos' EXCLUSIVE IN 0
-		ALTER table cybmovimientos ADD COLUMN presupuesto c(20) DEFAULT ''
-		ALTER table cybmovimientos ADD COLUMN ciclo c(20) DEFAULT ''
-		USE IN cybmovimientos
+    lcBase = ADDBS(pcSysDir + pcdb)
+    llResultado = .T.
+
+    llResultado = _ValidarCamposPresupuestoCiclo( ;
+        lcBase + "cyvcompras.dbf", ;
+        "zcvcomp") AND llResultado
+
+    llResultado = _ValidarCamposPresupuestoCiclo( ;
+        lcBase + "cyvventas.dbf", ;
+        "zcvventa") AND llResultado
+
+    llResultado = _ValidarCamposPresupuestoCiclo( ;
+        lcBase + "ctbpartidas.dbf", ;
+        "zctbpart") AND llResultado
+
+    llResultado = _ValidarCamposPresupuestoCiclo( ;
+        lcBase + "cybmovimientos.dbf", ;
+        "zcybmov") AND llResultado
+
+    llResultado = _ValidarCamposPresupuestoCiclo( ;
+        lcBase + "siskardexdoc.dbf", ;
+        "zskardex") AND llResultado
+
+    WAIT CLEAR
+
+    RETURN llResultado
+ENDFUNC
 
 
-		USE pcSysDir+pcdb+'\siskardexdoc' EXCLUSIVE IN 0
-		ALTER table siskardexdoc ADD COLUMN presupuesto c(20) DEFAULT ''
-		ALTER table siskardexdoc ADD COLUMN ciclo c(20) DEFAULT ''
-		USE IN siskardexdoc
-		
-		WAIT CLEAR 
-	ENDIF 
-	RETURN .t.
-ENDFUNC 
+FUNCTION _ValidarCamposPresupuestoCiclo
+    LPARAMETERS tcRutaTabla, tcAlias
+
+    LOCAL ARRAY laCampos[1]
+    LOCAL lnAreaAnterior, lnCampos, lnCampo
+    LOCAL llPresupuesto, llCiclo, llResultado
+    LOCAL loError
+
+    lnAreaAnterior = SELECT()
+    llPresupuesto = .F.
+    llCiclo = .F.
+    llResultado = .T.
+
+    IF EMPTY(tcRutaTabla) OR !FILE(tcRutaTabla)
+        MESSAGEBOX( ;
+            "No se encontró la tabla:" + CHR(13) + ;
+            tcRutaTabla, ;
+            16, ;
+            "Validación de estructura")
+        RETURN .F.
+    ENDIF
+
+    TRY
+        * Abrir únicamente para revisar la estructura.
+        SELECT 0
+        USE (tcRutaTabla) SHARED AGAIN ALIAS (tcAlias)
+
+        lnCampos = AFIELDS(laCampos, tcAlias)
+
+        FOR lnCampo = 1 TO lnCampos
+            DO CASE
+                CASE UPPER(ALLTRIM(laCampos[lnCampo, 1])) == ;
+                     "PRESUPUESTO"
+                    llPresupuesto = .T.
+
+                CASE UPPER(ALLTRIM(laCampos[lnCampo, 1])) == ;
+                     "CICLO"
+                    llCiclo = .T.
+            ENDCASE
+        ENDFOR
+
+        * Cerrar la apertura compartida.
+        USE IN (tcAlias)
+
+        * Abrir exclusiva solamente si falta algún campo.
+        IF !llPresupuesto OR !llCiclo
+            SELECT 0
+            USE (tcRutaTabla) EXCLUSIVE AGAIN ALIAS (tcAlias)
+            SELECT (tcAlias)
+
+            IF !llPresupuesto
+                ALTER TABLE &tcAlias ;
+                    ADD COLUMN presupuesto C(20) DEFAULT ''
+            ENDIF
+
+            IF !llCiclo
+                ALTER TABLE &tcAlias ;
+                    ADD COLUMN ciclo C(20) DEFAULT ''
+            ENDIF
+
+            USE IN (tcAlias)
+        ENDIF
+
+    CATCH TO loError
+        llResultado = .F.
+
+        IF USED(tcAlias)
+            USE IN (tcAlias)
+        ENDIF
+
+        MESSAGEBOX( ;
+            "No se pudo actualizar la estructura de:" + CHR(13) + ;
+            tcRutaTabla + CHR(13) + CHR(13) + ;
+            loError.Message, ;
+            16, ;
+            "Validación de estructura")
+    ENDTRY
+
+    IF lnAreaAnterior > 0
+        SELECT (lnAreaAnterior)
+    ENDIF
+
+    RETURN llResultado
+ENDFUNC
+
 
 
 
@@ -43205,6 +43471,10 @@ FUNCTION _ConsultaLibroMayorPDF(tnSql, tdFec1, tdFec2, tlNoIncluirCierre)
 			"'),CTOD('" + lcFec2 + "')) and d.idtipopar=254) "
 	ENDIF
 
+	* Regla contable PDF: no sumar documentos anulados o eliminados.
+	IF !PrepararDetallePartidasReportes(ldfec2)
+		RETURN ""
+	ENDIF
 	lnIdctaUtilAnte = _idCuentaUtilidadOperdidaEjercicioAnterior(lnSql, ldfec11)
 	lnIdctaUtilPer = _idCuentaUtilidadOperdidaEjercicioPeriodo(lnSql, ldfec11, ldfec2)
 
@@ -43215,7 +43485,7 @@ FUNCTION _ConsultaLibroMayorPDF(tnSql, tdFec1, tdFec2, tlNoIncluirCierre)
 		IIF(BETWEEN(t2.fechapartida, ldfec1, ldfec2), ROUND(t1.debe,2), 000000000000.00) AS debe, ;
 		IIF(BETWEEN(t2.fechapartida, ldfec1, ldfec2), ROUND(t1.haber,2), 000000000000.00) AS haber, ;
 		t2.fechapartida, t1.idctrocosto, t1.idpartida ;
-		FROM ctbpartidasdeta t1 ;
+		FROM c_reportPartidas t1 ;
 		INNER JOIN ctbpartidas t2 ON t1.idpartida=t2.idpartida ;
 		WHERE t2.origen<>'CYB' AND t2.fechapartida<=ldfec2 &lcfilt2 ;
 	UNION ALL ;
@@ -43225,7 +43495,7 @@ FUNCTION _ConsultaLibroMayorPDF(tnSql, tdFec1, tdFec2, tlNoIncluirCierre)
 		IIF(BETWEEN(z.fechadocto, ldfec1, ldfec2), ROUND(t1.debe,2), 000000000000.00) AS debe, ;
 		IIF(BETWEEN(z.fechadocto, ldfec1, ldfec2), ROUND(t1.haber,2), 000000000000.00) AS haber, ;
 		z.fechadocto AS fechapartida, t1.idctrocosto, t1.idpartida ;
-		FROM ctbpartidasdeta t1 ;
+		FROM c_reportPartidas t1 ;
 		INNER JOIN cybmovimientos z ON t1.idpartida=z.iddocto ;
 		WHERE z.fechadocto<=ldfec2 ;
 		INTO CURSOR c_detalle READWRITE
@@ -43266,7 +43536,7 @@ FUNCTION _ConsultaLibroMayorPDF(tnSql, tdFec1, tdFec2, tlNoIncluirCierre)
 			a.conceptod, ROUND(a.debe,2) AS debe, ROUND(a.haber,2) AS haber, ;
 			a.origen, a.idorigen, a.idsucursal, a.idctrocosto, a.nodo, a.eliminado, ;
 			IIF(d.fechapartida<ldfec11, ldfec11-1, d.fechapartida) AS fechapartida ;
-		FROM ctbpartidasdeta a ;
+		FROM c_reportPartidas a ;
 			INNER JOIN ctbpartidas d ON a.idpartida=d.idpartida ;
 			INNER JOIN ctbcuentas b ON a.idcuenta=b.idcuenta ;
 			INNER JOIN ctbcuentas t4 ON IIF(BETWEEN(b.idtipocuenta,400,999), ;
@@ -44995,4 +45265,31 @@ FUNCTION DebeSincronizarVentaIM
 	ENDTRY
 
 	RETURN llSincroniza
+ENDFUNC
+
+
+
+
+FUNCTION ObtenerSemanaUnica(ldFecha)
+    LOCAL lnSemana, lnAnioISO, lnCodigoUnico
+
+    * 2 = La primera semana del año tiene al menos 4 días en el nuevo año (ISO 8601)
+    * 2 = La semana empieza en lunes
+    lnSemana = WEEK(ldFecha, 2, 2)
+    lnAnioISO = YEAR(ldFecha)
+
+    * Ajuste por si los últimos días de diciembre ya pertenecen a la semana 1 del año siguiente
+    IF lnSemana = 1 AND MONTH(ldFecha) = 12
+        lnAnioISO = lnAnioISO + 1
+    * Ajuste por si los primeros días de enero pertenecen a la última semana del año anterior
+    ELSE
+        IF lnSemana >= 52 AND MONTH(ldFecha) = 1
+            lnAnioISO = lnAnioISO - 1
+        ENDIF
+    ENDIF
+
+    * Multiplicamos por 100 para empujar el año a la izquierda (Ej: 202600 + 45 = 202645)
+    lnCodigoUnico = (lnAnioISO * 100) + lnSemana
+
+    RETURN lnCodigoUnico
 ENDFUNC

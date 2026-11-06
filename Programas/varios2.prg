@@ -10849,12 +10849,30 @@ FUNCTION _idUltimoDocProdCliPro(lnsqlc,lnidprd,lnidclpr,lcori,lniddoc)
 	lcaliasulti=ALIAS()
 	IF pnTipoConeccion=1
 		IF !USED('sistipodoctos')
-			USE pcsysdir+pcDB+"\sistipodoctos" IN 0 SHARED AGAIN ORDER idtipodocto	
-		ENDIF 
+			USE pcsysdir+pcDB+"\sistipodoctos" IN 0 SHARED AGAIN ORDER idtipodocto
+		ENDIF
 		IF !USED('siskardex')
 			USE pcsysdir+pcDB+"\siskardex" IN 0 SHARED AGAIN ORDER iddocto
-		ENDIF 
-	ENDIF 
+		ENDIF
+		IF !USED('invproductos')
+			USE pcsysdir+pcDB+"\invproductos" IN 0 SHARED AGAIN ALIAS invproductos
+		ENDIF
+		IF lcori='VTA'
+			IF !USED('cyvventasdeta')
+				USE pcsysdir+pcDB+"\cyvventasdeta" IN 0 SHARED AGAIN ALIAS cyvventasdeta
+			ENDIF
+			IF !USED('cyvventas')
+				USE pcsysdir+pcDB+"\cyvventas" IN 0 SHARED AGAIN ALIAS cyvventas
+			ENDIF
+		ELSE
+			IF !USED('cyvcomprasdeta')
+				USE pcsysdir+pcDB+"\cyvcomprasdeta" IN 0 SHARED AGAIN ALIAS cyvcomprasdeta
+			ENDIF
+			IF !USED('cyvcompras')
+				USE pcsysdir+pcDB+"\cyvcompras" IN 0 SHARED AGAIN ALIAS cyvcompras
+			ENDIF
+		ENDIF
+	ENDIF
 	CREATE CURSOR c_ultimo (ultimo c(240),uiddocto i,uiddoctod i,idproducto i,idclipro i)
 	
 	IF lcori='VTA'
@@ -12799,14 +12817,18 @@ ENDFUNC
 
 
 
-FUNCTION GenerarArchivoPDF_DTE(lcfileReporWhast,lcFileArcPDFWhast)
+FUNCTION GenerarArchivoPDF_DTE(lcfileReporWhast,lcFileArcPDFWhast,llPDFComoImagen)
 
 	lcPrintActual=SET("PRINTER", 3)
 	
 	llseimprimio=1
-	&pcArchivosProcedimientos
+	* Procedimientos ya integrados en el ejecutable; no buscar PRG externos.
 	lcFilepdfGenerar=LOWER(lcFileArcPDFWhast)
 	SET REPORTBEHAVIOR 90
+	lnTipoSalidaPDF=10
+	IF PCOUNT()>=3 AND VARTYPE(llPDFComoImagen)='L' AND llPDFComoImagen
+		lnTipoSalidaPDF=11
+	ENDIF
 
 	IF TYPE("_Screen.oFoxyPreviewer")="O"
 		IF PEMSTATUS(_Screen.oFoxyPreviewer,"_nDataSessionMode",5)
@@ -12814,7 +12836,11 @@ FUNCTION GenerarArchivoPDF_DTE(lcfileReporWhast,lcFileArcPDFWhast)
 		ENDIF
 	ENDIF
 
-	REPORT FORM (lcfileReporWhast) OBJECT TYPE 10 TO FILE (lcFileArcPDFWhast) 
+	IF lnTipoSalidaPDF=11
+		REPORT FORM (lcfileReporWhast) OBJECT TYPE 11 TO FILE (lcFileArcPDFWhast)
+	ELSE
+		REPORT FORM (lcfileReporWhast) OBJECT TYPE 10 TO FILE (lcFileArcPDFWhast)
+	ENDIF
 	
 ENDFUNC 
 
@@ -20595,4 +20621,720 @@ FUNCTION _ValidarProcedimientosAlmacenadosDBC
 	ENDIF
 
 	RETURN llResultado
+ENDFUNC
+
+
+************************************************************************
+* Cobro rapido por ID, numero de control o codigo de generacion.
+* Integrado en varios2 para no depender de PRG externos en ejecucion.
+************************************************************************
+FUNCTION ConsultarDocumentoCobroCodBar
+	LPARAMETERS tuIdentificador, tnIdDocumento, tcInfo
+	LOCAL lnAreaAnterior, lnIdCliente, lnSaldoDocumento, lnSaldoVencido
+	LOCAL lcAliasAnterior, lcError, loError, ldFechaCobro, llEncontrado
+
+	tnIdDocumento = 0
+	tcInfo = ""
+	lnAreaAnterior = SELECT()
+	lcAliasAnterior = ALIAS()
+	lcError = ""
+	llEncontrado = .F.
+
+	IF TYPE("pnTipoConeccion") <> "N" OR pnTipoConeccion <> 1
+		tcInfo = "La consulta requiere la conexion nativa de SIGA."
+		RETURN .F.
+	ENDIF
+
+	TRY
+		=CodBarAbrirTabla("siskardexdoc", "iddocto")
+		* sisdte no tiene obligatoriamente una etiqueta llamada iddocto.
+		=CodBarAbrirTabla("sisdte", "")
+		=CodBarAbrirTabla("cyvclipro", "idclipro")
+		=CodBarAbrirTabla("sistipodoctos", "idtipodoct")
+
+		tnIdDocumento = CodBarResolverIdDocumento(tuIdentificador)
+		IF tnIdDocumento <= 0
+			ERROR "No se encontro un documento con el ID, numero de control o codigo de generacion indicado."
+		ENDIF
+
+		ldFechaCobro = DATE()
+		IF TYPE("pnUsarFechaCorte") = "N" AND INLIST(pnUsarFechaCorte, 2, 3) AND ;
+			TYPE("pdFechaPTV") = "D" AND !EMPTY(pdFechaPTV)
+			ldFechaCobro = pdFechaPTV
+		ENDIF
+
+		IF USED("cCodBarConsulta")
+			USE IN cCodBarConsulta
+		ENDIF
+		SELECT a.iddocto, a.idclipro, a.numero, a.fechadocto, a.totaldocto, ;
+			ROUND(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono, 2) AS saldo, ;
+			b.codtipo, b.tipodocto, c.codclipro, c.clipro ;
+			FROM siskardexdoc a ;
+			INNER JOIN sistipodoctos b ON a.idtipodocto = b.idtipodocto ;
+			INNER JOIN cyvclipro c ON a.idclipro = c.idclipro ;
+			WHERE a.iddocto = m.tnIdDocumento AND UPPER(ALLTRIM(a.origen)) = "VTA" ;
+				AND a.condipago = 1 AND a.ctrolcxcp = 1 ;
+				AND a.status = 1 AND a.eliminado = 0 ;
+			INTO CURSOR cCodBarConsulta READWRITE
+
+		IF RECCOUNT("cCodBarConsulta") = 0
+			ERROR "El documento indicado no corresponde a una factura al credito activa."
+		ENDIF
+		SELECT cCodBarConsulta
+		GO TOP
+		lnSaldoDocumento = ROUND(NVL(cCodBarConsulta.saldo, 0), 2)
+		tcInfo = PADL(TRANSFORM(DAY(cCodBarConsulta.fechadocto)), 2, "0") + "-" + ;
+			PADL(TRANSFORM(MONTH(cCodBarConsulta.fechadocto)), 2, "0") + "-" + ;
+			TRANSFORM(YEAR(cCodBarConsulta.fechadocto)) + "   " + ;
+			ALLTRIM(cCodBarConsulta.codtipo) + "-" + ALLTRIM(cCodBarConsulta.numero) + CHR(13) + ;
+			ALLTRIM(TRANSFORM(cCodBarConsulta.codclipro)) + "-" + ;
+			ALLTRIM(cCodBarConsulta.clipro) + "   US$" + ;
+			ALLTRIM(TRANSFORM(lnSaldoDocumento, "999,999,999.99"))
+		lnIdCliente = cCodBarConsulta.idclipro
+
+		IF USED("cCodBarConsultaVencido")
+			USE IN cCodBarConsultaVencido
+		ENDIF
+		SELECT ROUND(SUM(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono), 2) AS vencido ;
+			FROM siskardexdoc a ;
+			WHERE a.idclipro = m.lnIdCliente AND a.iddocto <> m.tnIdDocumento ;
+				AND UPPER(ALLTRIM(a.origen)) = "VTA" AND a.condipago = 1 ;
+				AND a.ctrolcxcp = 1 AND a.status = 1 AND a.eliminado = 0 ;
+				AND a.fechavenci < m.ldFechaCobro ;
+				AND ROUND(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono, 2) > 0 ;
+			INTO CURSOR cCodBarConsultaVencido READWRITE
+		SELECT cCodBarConsultaVencido
+		lnSaldoVencido = ROUND(NVL(cCodBarConsultaVencido.vencido, 0), 2)
+
+		SELECT cCodBarConsulta
+		tcInfo = tcInfo + IIF(lnSaldoVencido > 0, "/US$" + ;
+				ALLTRIM(TRANSFORM(lnSaldoDocumento + lnSaldoVencido, "999,999,999.99")), "")
+		IF lnSaldoDocumento <= 0
+			IF lnSaldoVencido > 0
+				tcInfo = tcInfo + CHR(13) + ;
+					"La factura indicada ya esta pagada. Hay saldo vencido pendiente por US$" + ;
+					ALLTRIM(TRANSFORM(lnSaldoVencido, "999,999,999.99")) + "."
+			ELSE
+				ERROR "La factura indicada no tiene saldo pendiente."
+			ENDIF
+		ENDIF
+		llEncontrado = .T.
+	CATCH TO loError
+		lcError = loError.Message
+		tnIdDocumento = 0
+		IF EMPTY(tcInfo)
+			tcInfo = lcError
+		ELSE
+			tcInfo = tcInfo + CHR(13) + lcError
+		ENDIF
+	FINALLY
+		IF USED("cCodBarConsultaVencido")
+			USE IN cCodBarConsultaVencido
+		ENDIF
+		IF USED("cCodBarConsulta")
+			USE IN cCodBarConsulta
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ELSE
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN llEncontrado
+ENDFUNC
+
+
+************************************************************************
+* Registra el cobro completo sin abrir ni instanciar formularios CYB.
+* Devuelve el ID de cybmovimientos creado; cero significa no procesado.
+************************************************************************
+FUNCTION ProcesarCobroCodBarSinInterfaz
+	LPARAMETERS tuIdentificador, tcNota, tcMensajeResultado
+	LOCAL lnIdDocumento, lnAreaAnterior, lnSql, lnIdMovimiento, lnIdTipoDocto
+	LOCAL lnIdSerie, lnIdCaja, lnIdSucursal, lnIdCtroCosto, lnIdCliente, lnIdUsuarioActual
+	LOCAL lnIdCtaCaja, lnIdCtaCliente, lnIdTipoPartida, lnTipoConta
+	LOCAL lnSaldoDocumento, lnSaldoVencido, lnTotalCobro, lnSaldoActual
+	LOCAL lnIdAplicacion, lnIdDetalle1, lnIdDetalle2, lnControl, lnRespuesta
+	LOCAL lnCantidadAplicar, lnFilaAplicar
+	LOCAL lcNumero, lcNumeroFactura, lcNumeroPartida, lcPeriodo, lcConcepto, lcMensaje
+	LOCAL lcCliente, lcDocumento, lcNota, lcAliasAnterior, lcError, lcErrorImpresion, loError
+	LOCAL ldFechaCobro, ltAhora, llTransaccion, llProcesar
+	LOCAL ARRAY laCodBarAplicar[1, 2]
+
+	lnIdDocumento = 0
+	lnAreaAnterior = SELECT()
+	lcAliasAnterior = ALIAS()
+	lnSql = 0
+	lnIdMovimiento = 0
+	llTransaccion = .F.
+	llProcesar = .T.
+	lcError = ""
+	lcErrorImpresion = ""
+	tcMensajeResultado = ""
+	lcNota = ""
+	IF VARTYPE(tcNota) = "C" OR VARTYPE(tcNota) = "M"
+		lcNota = LEFT(ALLTRIM(tcNota), 250)
+	ENDIF
+
+	IF EMPTY(ALLTRIM(TRANSFORM(tuIdentificador)))
+		tcMensajeResultado = "Ingrese el ID, numero de control o codigo de generacion de la factura."
+		RETURN 0
+	ENDIF
+	IF TYPE("pnTipoConeccion") <> "N" OR pnTipoConeccion <> 1
+		tcMensajeResultado = "El cobro automatico requiere la conexion nativa de SIGA."
+		RETURN 0
+	ENDIF
+
+	TRY
+		=CodBarAbrirTabla("siskardexdoc", "iddocto")
+		* sisdte no tiene obligatoriamente una etiqueta llamada iddocto.
+		=CodBarAbrirTabla("sisdte", "")
+		=CodBarAbrirTabla("cyvclipro", "idclipro")
+		=CodBarAbrirTabla("sisusuarios", "idusuario")
+		=CodBarAbrirTabla("sistipodoctos", "idtipodoct")
+		=CodBarAbrirTabla("cybcajabancos", "idcajban")
+		=CodBarAbrirTabla("sisseries", "idserie")
+		=CodBarAbrirTabla("sisformatos", "idformato")
+		=CodBarAbrirTabla("cybmovimientos", "iddocto")
+		=CodBarAbrirTabla("siskardexapli", "idaplica")
+		=CodBarAbrirTabla("ctbpartidas", "idpartida")
+		=CodBarAbrirTabla("ctbpartidasdeta", "idpartidad")
+		=CodBarAbrirTabla("ctbnumpar", "idnumpar")
+
+		lnIdDocumento = CodBarResolverIdDocumento(tuIdentificador)
+		IF lnIdDocumento <= 0
+			ERROR "No se encontro un documento con el ID, numero de control o codigo de generacion indicado."
+		ENDIF
+
+		ldFechaCobro = DATE()
+		IF TYPE("pnUsarFechaCorte") = "N" AND INLIST(pnUsarFechaCorte, 2, 3) AND ;
+			TYPE("pdFechaPTV") = "D" AND !EMPTY(pdFechaPTV)
+			ldFechaCobro = pdFechaPTV
+		ENDIF
+		IF TYPE("pdFechaConta") = "D" AND !EMPTY(pdFechaConta) AND ldFechaCobro <= pdFechaConta
+			ERROR "La fecha del cobro debe ser posterior al cierre contable."
+		ENDIF
+
+		IF USED("cCodBarObjetivo")
+			USE IN cCodBarObjetivo
+		ENDIF
+		SELECT a.iddocto, a.idclipro, a.idtipodocto, a.numero, a.fechadocto, ;
+			a.fechavenci, a.totaldocto, a.rentadocto, a.rentaabono, a.cargoabono, ;
+			ROUND(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono, 2) AS saldo, ;
+			b.codtipo, b.tipodocto, c.codclipro, c.clipro, c.ctacliloc, c.extranjero ;
+			FROM siskardexdoc a ;
+			INNER JOIN sistipodoctos b ON a.idtipodocto = b.idtipodocto ;
+			INNER JOIN cyvclipro c ON a.idclipro = c.idclipro ;
+			WHERE a.iddocto = m.lnIdDocumento AND UPPER(ALLTRIM(a.origen)) = "VTA" ;
+				AND a.condipago = 1 AND a.ctrolcxcp = 1 ;
+				AND a.status = 1 AND a.eliminado = 0 ;
+			INTO CURSOR cCodBarObjetivo READWRITE
+
+		IF RECCOUNT("cCodBarObjetivo") = 0
+			ERROR "El documento indicado no corresponde a una factura al credito, activa y pendiente."
+		ENDIF
+		SELECT cCodBarObjetivo
+		GO TOP
+		lnSaldoDocumento = ROUND(NVL(cCodBarObjetivo.saldo, 0), 2)
+		lnIdCliente = cCodBarObjetivo.idclipro
+		lcCliente = ALLTRIM(cCodBarObjetivo.clipro)
+		lcNumeroFactura = ALLTRIM(cCodBarObjetivo.numero)
+		lcDocumento = ALLTRIM(cCodBarObjetivo.codtipo) + "-" + ;
+			lcNumeroFactura
+		lnIdCtaCliente = NVL(cCodBarObjetivo.ctacliloc, 0)
+		IF lnIdCtaCliente = 0
+			lnIdCtaCliente = IIF(cCodBarObjetivo.extranjero = 0, pnCtaCliLoc, pnCtaCliExt)
+		ENDIF
+
+		IF USED("cCodBarAplicar")
+			USE IN cCodBarAplicar
+		ENDIF
+		SELECT a.iddocto, ;
+			ROUND(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono, 2) AS saldo, ;
+			a.fechavenci, IIF(a.iddocto = m.lnIdDocumento, 1, 0) AS principal ;
+			FROM siskardexdoc a ;
+			WHERE a.idclipro = m.lnIdCliente AND UPPER(ALLTRIM(a.origen)) = "VTA" ;
+				AND a.condipago = 1 AND a.ctrolcxcp = 1 ;
+				AND a.status = 1 AND a.eliminado = 0 ;
+				AND (a.iddocto = m.lnIdDocumento OR a.fechavenci < m.ldFechaCobro) ;
+				AND ROUND(a.totaldocto - (a.rentadocto + a.rentaabono) + a.cargoabono, 2) > 0 ;
+			ORDER BY principal DESC, a.fechavenci, a.fechadocto, a.iddocto ;
+			INTO CURSOR cCodBarAplicar READWRITE
+
+		SELECT cCodBarAplicar
+		SUM IIF(principal = 0, saldo, 0) TO lnSaldoVencido
+		lnSaldoVencido = ROUND(NVL(lnSaldoVencido, 0), 2)
+		lnTotalCobro = ROUND(lnSaldoDocumento + lnSaldoVencido, 2)
+		IF lnSaldoDocumento <= 0 AND lnSaldoVencido <= 0
+			ERROR "La factura indicada no tiene saldo pendiente."
+		ENDIF
+
+		* Copiar todo antes del primer mensaje. Mientras un MESSAGEBOX esta activo,
+		* otros eventos del sistema pueden cerrar cursores temporales de esta sesion.
+		COUNT TO lnCantidadAplicar
+		IF lnCantidadAplicar <= 0
+			ERROR "No hay documentos seleccionados para aplicar el cobro."
+		ENDIF
+		DIMENSION laCodBarAplicar[lnCantidadAplicar, 2]
+		lnFilaAplicar = 0
+		SCAN
+			lnFilaAplicar = lnFilaAplicar + 1
+			laCodBarAplicar[lnFilaAplicar, 1] = cCodBarAplicar.iddocto
+			laCodBarAplicar[lnFilaAplicar, 2] = cCodBarAplicar.saldo
+		ENDSCAN
+
+		IF lnSaldoDocumento <= 0
+			lcMensaje = "La factura " + lcDocumento + " ya esta pagada." + ;
+				CHR(13) + "Saldo vencido pendiente: US$" + ;
+				ALLTRIM(TRANSFORM(lnSaldoVencido, "999,999,999,999.99")) + ;
+				CHR(13) + CHR(13) + "Desea cancelar el saldo vencido pendiente?"
+			IF MESSAGEBOX(lcMensaje, 4 + 32 + 256, "Confirmar saldo pendiente") <> 6
+				llProcesar = .F.
+			ENDIF
+		ELSE
+			IF lnSaldoVencido > 0
+				lcMensaje = "Saldo vencido adicional: US$" + ;
+					ALLTRIM(TRANSFORM(lnSaldoVencido, "999,999,999,999.99")) + CHR(13) + ;
+					"Total a abonar con la factura: US$" + ;
+					ALLTRIM(TRANSFORM(lnTotalCobro, "999,999,999,999.99")) + CHR(13) + CHR(13) + ;
+					"Desea abonar la factura junto con el saldo vencido?"
+				lnRespuesta = MESSAGEBOX(lcMensaje, 4 + 32 + 256, "Confirmar cobro automatico")
+			ELSE
+				lnRespuesta = 7
+			ENDIF
+
+			IF lnRespuesta <> 6
+				lnSaldoVencido = 0
+				lnTotalCobro = lnSaldoDocumento
+				lnCantidadAplicar = 1
+				laCodBarAplicar[1, 1] = lnIdDocumento
+				laCodBarAplicar[1, 2] = lnSaldoDocumento
+				lcMensaje = "Abonar factura " + lcDocumento + " por US$" + ;
+					ALLTRIM(TRANSFORM(lnSaldoDocumento, "999,999,999,999.99")) + "?"
+				IF MESSAGEBOX(lcMensaje, 4 + 32 + 256, "Confirmar pago de factura") <> 6
+					llProcesar = .F.
+				ENDIF
+			ENDIF
+		ENDIF
+
+		IF llProcesar
+			IF TYPE("pnIdUsuario") <> "N" OR pnIdUsuario <= 0
+				ERROR "No se pudo identificar el usuario actual de SIGA."
+			ENDIF
+			lnIdUsuarioActual = pnIdUsuario
+			IF USED("cCodBarUsuario")
+				USE IN cCodBarUsuario
+			ENDIF
+			SELECT idcajban, idsucursal, idctrocosto ;
+				FROM sisusuarios ;
+				WHERE idusuario = m.lnIdUsuarioActual ;
+				INTO CURSOR cCodBarUsuario READWRITE
+			IF RECCOUNT("cCodBarUsuario") = 0
+				ERROR "No se encontro la configuracion del usuario actual."
+			ENDIF
+			SELECT cCodBarUsuario
+			GO TOP
+			lnIdCaja = NVL(cCodBarUsuario.idcajban, 0)
+			lnIdSucursal = NVL(cCodBarUsuario.idsucursal, 0)
+			lnIdCtroCosto = NVL(cCodBarUsuario.idctrocosto, 0)
+			IF lnIdCaja <= 0
+				ERROR "No hay una caja predeterminada para registrar el cobro."
+			ENDIF
+			IF lnIdSucursal <= 0 OR lnIdCtroCosto <= 0
+				ERROR "El usuario no tiene sucursal o centro de costo predeterminado."
+			ENDIF
+
+			IF USED("cCodBarTipo")
+				USE IN cCodBarTipo
+			ENDIF
+			SELECT TOP 1 idtipodocto, codtipo, tipodocto, ctrolcxc, ctrolcyb, ;
+				conreferencia, tipoconta, idtipopar ;
+				FROM sistipodoctos ;
+				WHERE UPPER(ALLTRIM(origen)) = "CYB" AND ctrolcxc = 2 ;
+					AND ctrolcyb = 1 AND conreferencia = 1 ;
+					AND status = 1 AND eliminado = 0 ;
+				ORDER BY codtipo ;
+				INTO CURSOR cCodBarTipo READWRITE
+			IF RECCOUNT("cCodBarTipo") = 0
+				ERROR "No existe un tipo de abono activo para clientes."
+			ENDIF
+			SELECT cCodBarTipo
+			GO TOP
+			lnIdTipoDocto = cCodBarTipo.idtipodocto
+			lnTipoConta = NVL(cCodBarTipo.tipoconta, 0)
+			lnIdTipoPartida = NVL(cCodBarTipo.idtipopar, 0)
+
+			IF !SEEK(lnIdCaja, "cybcajabancos", "idcajban") OR ;
+				cybcajabancos.status <> 1 OR cybcajabancos.eliminado = 1
+				ERROR "La caja predeterminada no esta activa."
+			ENDIF
+			lnIdCtaCaja = NVL(cybcajabancos.idctacajban1, 0)
+			IF lnTipoConta <> 0 AND lnIdTipoPartida > 0 AND ;
+				(lnIdCtaCaja = 0 OR lnIdCtaCliente = 0)
+				ERROR "No estan configuradas las cuentas contables de caja y cliente."
+			ENDIF
+
+			lnSql = _Conecta(pcDB)
+			IF lnSql <= 0
+				ERROR "No fue posible abrir la conexion de datos."
+			ENDIF
+			lnIdSerie = BuscaSerieFormato(lnSql, lnIdTipoDocto, lnIdSucursal, ;
+				0, lnIdCaja, ldFechaCobro)
+			IF lnIdSerie <= 0 OR !SEEK(lnIdSerie, "sisseries", "idserie") OR ;
+				sisseries.status <> 1 OR sisseries.eliminado = 1 OR sisseries.automatica <> 1
+				ERROR "No existe una serie automatica activa para el abono y la caja."
+			ENDIF
+
+			lnControl = miSQLEXEC(lnSql, "BEGIN")
+			IF lnControl <= 0
+				ERROR "No fue posible iniciar la transaccion del cobro."
+			ENDIF
+			llTransaccion = .T.
+
+			FOR lnFilaAplicar = 1 TO lnCantidadAplicar
+				IF !SEEK(laCodBarAplicar[lnFilaAplicar, 1], "siskardexdoc", "iddocto") OR ;
+					!RLOCK("siskardexdoc")
+					ERROR "Otro usuario esta procesando uno de los documentos seleccionados."
+				ENDIF
+				lnSaldoActual = ROUND(siskardexdoc.totaldocto - ;
+					(siskardexdoc.rentadocto + siskardexdoc.rentaabono) + ;
+					siskardexdoc.cargoabono, 2)
+				IF siskardexdoc.status <> 1 OR siskardexdoc.eliminado = 1 OR ;
+					lnSaldoActual <> ROUND(laCodBarAplicar[lnFilaAplicar, 2], 2)
+					ERROR "El saldo cambio. Vuelva a leer el codigo de la factura."
+				ENDIF
+			ENDFOR
+
+			lnIdMovimiento = _SiguienteIdTabla(pcNodo, "DET")
+			lcNumero = AsignaNumeroSerie(lnSql, lnIdSerie)
+			lcPeriodo = SUBSTR(DTOS(ldFechaCobro), 1, 6)
+			lcNumeroPartida = AsignaNumeroPartida(lnSql, lnIdTipoPartida, ;
+				ldFechaCobro, pcNodo, 1)
+			ltAhora = DATETIME()
+			lcConcepto = SUBSTR(ALLTRIM(cCodBarTipo.tipodocto) + ;
+				" Numero Docto. " + ALLTRIM(lcNumero) + " " + lcCliente, 1, 250)
+
+			INSERT INTO cybmovimientos ;
+				(iddocto, idtipodocto, idserie, idcajban, idcajbantras, idsucursal, ;
+				idctrocosto, numero, fechadocto, idseriechq, numerochq, numeropartida, ;
+				nomcheque, idclipro, idagente, totaldocto, totaldoctotras, rentadocto, ;
+				rentaabono, conreferencia, periodo, origen, ctrolcxcp, ctrolcyb, notas, ;
+				idtipopar, pago, sospechoso, EfvoMonto, BcoMonto, BcoRef, TarMonto, ;
+				Tar4Dig, BitMonto, OtrMonto, impreso, anulado, status, eliminado, ;
+				fecalta, fecmod, nodo, iduser, pcuser, idptmo, origenptmo, presupuesto) ;
+			VALUES ;
+				(lnIdMovimiento, lnIdTipoDocto, lnIdSerie, lnIdCaja, 0, lnIdSucursal, ;
+				lnIdCtroCosto, lcNumero, ldFechaCobro, 0, "", lcNumeroPartida, ;
+				"", lnIdCliente, 0, lnTotalCobro, 0, 0, 0, 1, lcPeriodo, "CYB", ;
+				2, 1, lcNota, ;
+				lnIdTipoPartida, lnTotalCobro, 0, 0, 0, "", 0, "", 0, 0, 0, 0, ;
+				1, 0, ltAhora, ltAhora, pcNodo, lnIdUsuarioActual, SYS(0), 0, 0, "")
+
+			IF lnTipoConta <> 0 AND lnIdTipoPartida > 0
+				INSERT INTO ctbpartidas ;
+					(idpartida, idtipopar, fechapartida, numeropartida, concepto, ;
+					idsucursal, idctrocosto, monto, periodo, origen, impreso, fecalta, ;
+					fecmod, nodo, eliminado, iduser, pcuser) ;
+				VALUES ;
+					(lnIdMovimiento, lnIdTipoPartida, ldFechaCobro, lcNumeroPartida, ;
+					lcConcepto, lnIdSucursal, lnIdCtroCosto, lnTotalCobro, lcPeriodo, ;
+					"CYB", 0, ltAhora, ltAhora, pcNodo, 0, lnIdUsuarioActual, SYS(0))
+
+				lnIdDetalle1 = _SiguienteIdTabla(pcNodo, "DET")
+				lnIdDetalle2 = _SiguienteIdTabla(pcNodo, "DET")
+				INSERT INTO ctbpartidasdeta ;
+					(idpartidad, idpartida, idcuenta, conceptod, periodo, origen, ;
+					idorigen, idsucursal, idctrocosto, debe, haber, fecalta, fecmod, ;
+					nodo, iduser, pcuser) ;
+				VALUES ;
+					(lnIdDetalle1, lnIdMovimiento, lnIdCtaCaja, lcConcepto, lcPeriodo, ;
+					"CYB", 0, lnIdSucursal, lnIdCtroCosto, lnTotalCobro, 0, ltAhora, ;
+					ltAhora, pcNodo, lnIdUsuarioActual, SYS(0))
+				INSERT INTO ctbpartidasdeta ;
+					(idpartidad, idpartida, idcuenta, conceptod, periodo, origen, ;
+					idorigen, idsucursal, idctrocosto, debe, haber, fecalta, fecmod, ;
+					nodo, iduser, pcuser) ;
+				VALUES ;
+					(lnIdDetalle2, lnIdMovimiento, lnIdCtaCliente, lcConcepto, lcPeriodo, ;
+					"CYB", 0, lnIdSucursal, lnIdCtroCosto, 0, lnTotalCobro, ltAhora, ;
+					ltAhora, pcNodo, lnIdUsuarioActual, SYS(0))
+			ENDIF
+
+			FOR lnFilaAplicar = 1 TO lnCantidadAplicar
+				lnIdAplicacion = _SiguienteIdTabla(pcNodo, "DET")
+				INSERT INTO siskardexapli ;
+					(idaplica, iddocto, iddoctoaplicar, carabo, monto, fechaaplicar, ;
+					eliminado, status, fecalta, fecmod, nodo, iduser, pcuser) ;
+				VALUES ;
+					(lnIdAplicacion, lnIdMovimiento, laCodBarAplicar[lnFilaAplicar, 1], 2, ;
+					laCodBarAplicar[lnFilaAplicar, 2], ldFechaCobro, 0, 1, ltAhora, ltAhora, ;
+					pcNodo, lnIdUsuarioActual, SYS(0))
+			ENDFOR
+
+			lnControl = miSQLEXEC(lnSql, "COMMIT")
+			IF lnControl <= 0
+				ERROR "No fue posible confirmar la transaccion del cobro."
+			ENDIF
+			llTransaccion = .F.
+			UNLOCK ALL
+			=CodBarMostrarOImprimirAbono(lnIdMovimiento, lnSql, lnIdTipoDocto, ;
+				lnIdSucursal, lnIdCaja, lnIdSerie, @lcErrorImpresion)
+			IF !EMPTY(lcErrorImpresion)
+				tcMensajeResultado = "Abono procesado, pero no fue posible mostrar o imprimir el formato: " + ;
+					lcErrorImpresion
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		lcError = loError.Message
+		IF llTransaccion
+			=miSQLEXEC(lnSql, "ROLLBACK")
+			llTransaccion = .F.
+		ENDIF
+		UNLOCK ALL
+		lnIdMovimiento = 0
+	FINALLY
+		IF lnSql > 0
+			=miSQLDISCONNECT(lnSql)
+		ENDIF
+		IF USED("cCodBarTipo")
+			USE IN cCodBarTipo
+		ENDIF
+		IF USED("cCodBarUsuario")
+			USE IN cCodBarUsuario
+		ENDIF
+		IF USED("cCodBarAplicar")
+			USE IN cCodBarAplicar
+		ENDIF
+		IF USED("cCodBarObjetivo")
+			USE IN cCodBarObjetivo
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ELSE
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	IF !EMPTY(lcError)
+		tcMensajeResultado = "No fue posible procesar el cobro: " + lcError
+	ENDIF
+	RETURN lnIdMovimiento
+ENDFUNC
+
+
+FUNCTION CodBarMostrarOImprimirAbono
+	LPARAMETERS tnIdMovimiento, tnSql, tnIdTipoDocto, tnIdSucursal, tnIdCaja, tnIdSerie, tcErrorImpresion
+	LOCAL lnIdFormato, lnTipoImpresion, loError
+	tcErrorImpresion = ""
+
+	TRY
+		lnIdFormato = BuscaIdFormato(tnSql, tnIdTipoDocto, tnIdSucursal, 0, tnIdCaja, tnIdSerie)
+		lnTipoImpresion = TipoImpresionFormato(lnIdFormato)
+		=ImprimirCajaBancosClientes(tnIdMovimiento, lnTipoImpresion, tnSql, pnTipoConeccion)
+	CATCH TO loError
+		tcErrorImpresion = loError.Message
+	ENDTRY
+
+	RETURN EMPTY(tcErrorImpresion)
+ENDFUNC
+
+
+************************************************************************
+* Obtiene el formato ABOCLI usado por el cobro rapido. El formulario
+* llamador se cierra antes de abrir la pantalla modal de Formatos.
+************************************************************************
+FUNCTION CodBarObtenerFormatoAbonoRapido
+	LPARAMETERS tcMensaje
+	LOCAL lnAreaAnterior, lnSql, lnIdUsuarioActual, lnIdCaja, lnIdSucursal
+	LOCAL lnIdTipoDocto, lnIdSerie, lnIdFormato, ldFechaCobro
+	LOCAL lcAliasAnterior, loError, llAbrioUsuarios, llAbrioTipos
+
+	tcMensaje = ""
+	lnAreaAnterior = SELECT()
+	lcAliasAnterior = ALIAS()
+	lnSql = 0
+	lnIdFormato = 0
+	llAbrioUsuarios = !USED("sisusuarios")
+	llAbrioTipos = !USED("sistipodoctos")
+
+	TRY
+		IF TYPE("pnTipoConeccion") <> "N" OR pnTipoConeccion <> 1
+			ERROR "La configuracion del formato requiere la conexion nativa de SIGA."
+		ENDIF
+		IF TYPE("pnIdUsuario") <> "N" OR pnIdUsuario <= 0
+			ERROR "No se pudo identificar el usuario actual de SIGA."
+		ENDIF
+		lnIdUsuarioActual = pnIdUsuario
+		=CodBarAbrirTabla("sisusuarios", "idusuario")
+		=CodBarAbrirTabla("sistipodoctos", "idtipodoct")
+
+		IF USED("cCodBarFormatoUsuario")
+			USE IN cCodBarFormatoUsuario
+		ENDIF
+		SELECT idcajban, idsucursal ;
+			FROM sisusuarios ;
+			WHERE idusuario = m.lnIdUsuarioActual ;
+			INTO CURSOR cCodBarFormatoUsuario READWRITE
+		IF RECCOUNT("cCodBarFormatoUsuario") = 0
+			ERROR "No se encontro la configuracion del usuario actual."
+		ENDIF
+		SELECT cCodBarFormatoUsuario
+		GO TOP
+		lnIdCaja = NVL(cCodBarFormatoUsuario.idcajban, 0)
+		lnIdSucursal = NVL(cCodBarFormatoUsuario.idsucursal, 0)
+		IF lnIdCaja <= 0 OR lnIdSucursal <= 0
+			ERROR "El usuario no tiene caja o sucursal predeterminada."
+		ENDIF
+
+		IF USED("cCodBarFormatoTipo")
+			USE IN cCodBarFormatoTipo
+		ENDIF
+		SELECT TOP 1 idtipodocto ;
+			FROM sistipodoctos ;
+			WHERE UPPER(ALLTRIM(origen)) = "CYB" AND ctrolcxc = 2 ;
+				AND ctrolcyb = 1 AND conreferencia = 1 ;
+				AND status = 1 AND eliminado = 0 ;
+			ORDER BY codtipo ;
+			INTO CURSOR cCodBarFormatoTipo READWRITE
+		IF RECCOUNT("cCodBarFormatoTipo") = 0
+			ERROR "No existe un tipo de abono activo para clientes."
+		ENDIF
+		SELECT cCodBarFormatoTipo
+		GO TOP
+		lnIdTipoDocto = cCodBarFormatoTipo.idtipodocto
+
+		ldFechaCobro = DATE()
+		IF TYPE("pnUsarFechaCorte") = "N" AND INLIST(pnUsarFechaCorte, 2, 3) AND ;
+			TYPE("pdFechaPTV") = "D" AND !EMPTY(pdFechaPTV)
+			ldFechaCobro = pdFechaPTV
+		ENDIF
+		lnSql = _Conecta(pcDB)
+		IF lnSql <= 0
+			ERROR "No fue posible abrir la conexion de datos."
+		ENDIF
+		lnIdSerie = BuscaSerieFormato(lnSql, lnIdTipoDocto, lnIdSucursal, ;
+			0, lnIdCaja, ldFechaCobro)
+		IF lnIdSerie <= 0
+			ERROR "No existe una serie activa para el abono rapido y la caja actual."
+		ENDIF
+		lnIdFormato = BuscaIdFormato(lnSql, lnIdTipoDocto, lnIdSucursal, ;
+			0, lnIdCaja, lnIdSerie)
+		IF lnIdFormato <= 0
+			ERROR "No existe un formato configurado para el abono rapido y la caja actual."
+		ENDIF
+
+	CATCH TO loError
+		tcMensaje = loError.Message
+		lnIdFormato = 0
+	FINALLY
+		IF lnSql > 0
+			=miSQLDISCONNECT(lnSql)
+		ENDIF
+		IF USED("cCodBarFormatoTipo")
+			USE IN cCodBarFormatoTipo
+		ENDIF
+		IF USED("cCodBarFormatoUsuario")
+			USE IN cCodBarFormatoUsuario
+		ENDIF
+		IF llAbrioTipos AND USED("sistipodoctos")
+			USE IN sistipodoctos
+		ENDIF
+		IF llAbrioUsuarios AND USED("sisusuarios")
+			USE IN sisusuarios
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ELSE
+			SELECT (lnAreaAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN lnIdFormato
+ENDFUNC
+
+
+FUNCTION CodBarResolverIdDocumento
+	LPARAMETERS tuIdentificador
+	LOCAL lcIdentificador, lnIdDocumento, lnAreaAnterior, lcAliasAnterior, llSoloNumeros
+	LOCAL lnIdCandidato, lnIdDte
+
+	lcIdentificador = UPPER(ALLTRIM(TRANSFORM(tuIdentificador)))
+	lnIdDocumento = 0
+	lnAreaAnterior = SELECT()
+	lcAliasAnterior = ALIAS()
+
+	IF EMPTY(lcIdentificador) OR !USED("siskardexdoc")
+		RETURN 0
+	ENDIF
+
+	llSoloNumeros = EMPTY(CHRTRAN(lcIdentificador, "0123456789", ""))
+	IF llSoloNumeros AND LEN(lcIdentificador) <= 20
+		lnIdDocumento = VAL(lcIdentificador)
+	ELSE
+		* Numero de control y codigo de generacion se comparan completos,
+		* sin quitar guiones ni elegir silenciosamente una coincidencia.
+		SELECT siskardexdoc
+		SCAN FOR UPPER(ALLTRIM(NVL(siskardexdoc.origen, ""))) == "VTA" ;
+				AND siskardexdoc.condipago = 1 AND siskardexdoc.ctrolcxcp = 1 ;
+				AND siskardexdoc.status = 1 AND siskardexdoc.eliminado = 0 ;
+				AND (UPPER(ALLTRIM(NVL(siskardexdoc.codigoGeneracion, ""))) == lcIdentificador ;
+				OR UPPER(ALLTRIM(NVL(siskardexdoc.numeroControl, ""))) == lcIdentificador)
+			lnIdCandidato = siskardexdoc.iddocto
+			IF lnIdDocumento = 0
+				lnIdDocumento = lnIdCandidato
+			ELSE
+				IF lnIdDocumento <> lnIdCandidato
+					ERROR "El numero de control o codigo de generacion coincide con mas de una factura. Use el ID interno del documento."
+				ENDIF
+			ENDIF
+		ENDSCAN
+
+		IF USED("sisdte")
+			SELECT sisdte
+			SCAN FOR UPPER(ALLTRIM(NVL(sisdte.origen, ""))) == "VTA" ;
+					AND (UPPER(ALLTRIM(NVL(sisdte.codigoGeneracion, ""))) == lcIdentificador ;
+					OR UPPER(ALLTRIM(NVL(sisdte.numeroControl, ""))) == lcIdentificador)
+				lnIdDte = sisdte.iddocto
+				SELECT siskardexdoc
+				LOCATE FOR siskardexdoc.iddocto = lnIdDte ;
+					AND UPPER(ALLTRIM(NVL(siskardexdoc.origen, ""))) == "VTA" ;
+					AND siskardexdoc.condipago = 1 AND siskardexdoc.ctrolcxcp = 1 ;
+					AND siskardexdoc.status = 1 AND siskardexdoc.eliminado = 0
+				IF FOUND()
+					IF lnIdDocumento = 0
+						lnIdDocumento = lnIdDte
+					ELSE
+						IF lnIdDocumento <> lnIdDte
+							ERROR "El numero de control o codigo de generacion coincide con mas de una factura. Use el ID interno del documento."
+						ENDIF
+					ENDIF
+				ENDIF
+				SELECT sisdte
+			ENDSCAN
+		ENDIF
+	ENDIF
+
+	IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+		SELECT (lcAliasAnterior)
+	ELSE
+		SELECT (lnAreaAnterior)
+	ENDIF
+
+	RETURN lnIdDocumento
+ENDFUNC
+
+
+FUNCTION CodBarAbrirTabla
+	LPARAMETERS tcTabla, tcOrden
+	LOCAL lcComando
+	IF !USED(tcTabla)
+		lcComando = "USE '" + pcSysDir + pcDB + "\" + tcTabla + ;
+			"' IN 0 SHARED AGAIN ALIAS " + tcTabla
+		IF !EMPTY(tcOrden)
+			lcComando = lcComando + " ORDER " + tcOrden
+		ENDIF
+		&lcComando
+	ENDIF
+	RETURN USED(tcTabla)
 ENDFUNC
