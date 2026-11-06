@@ -16573,8 +16573,10 @@ FUNCTION ValidarClientesDescuentosPorProducto()
 				(idcliprop I AUTOINC primary key,;
 					idclipro i,;
 					idproducto i,;
-					descuentogalon n(16,6) )
+					descuentogalon n(16,6),;
+					codprodprov c(80) DEFAULT '' )
 		INDEX on STR(idclipro)+STR(idproducto) TAG llavedescu CANDIDATE 
+		INDEX on STR(idclipro,10)+IIF(EMPTY(codprodprov),STR(idcliprop,10)+SPACE(70),UPPER(PADR(ALLTRIM(codprodprov),80))) TAG provcode CANDIDATE
 		
 		USE IN cyvcliproPrecios
 
@@ -16606,6 +16608,76 @@ FUNCTION ValidarClientesDescuentosPorProducto()
 
 				
 	ENDIF 
+
+	*** Alias de producto por proveedor usado por importacion JSON de Compras.
+	*** Las filas historicas sin alias siguen admitidas; un alias no vacio es unico por proveedor.
+	llmigraralias=.F.
+	IF FILE(pcSysDir+pcdb+"\cyvcliproPrecios.dbf")
+		USE pcSysDir+pcdb+"\cyvcliproPrecios" IN 0 SHARED ALIAS curcliproprecios
+		SELECT curcliproprecios
+		DIMENSION lacamposclipro[1]
+		lncamposclipro=AFIELDS(lacamposclipro)
+		lncampoprov=0
+		FOR lnitemclipro=1 TO lncamposclipro
+			IF UPPER(ALLTRIM(lacamposclipro[lnitemclipro,1]))="CODPRODPROV"
+				lncampoprov=lnitemclipro
+				EXIT
+			ENDIF
+		ENDFOR
+		IF lncampoprov>0 AND (UPPER(lacamposclipro[lncampoprov,2])<>"C" OR lacamposclipro[lncampoprov,3]<>80)
+			USE IN curcliproprecios
+			IF !EMPTY(lcaliasvalida)
+				SELECT (lcaliasvalida)
+			ENDIF
+			RETURN .F.
+		ENDIF
+		lnprovtag=0
+		FOR lnitemclipro=1 TO TAGCOUNT("curcliproprecios")
+			IF UPPER(TAG(lnitemclipro,"curcliproprecios"))="PROVCODE"
+				lnprovtag=lnitemclipro
+				EXIT
+			ENDIF
+		ENDFOR
+		IF lnprovtag>0
+			lcprovexpr=UPPER(STRTRAN(ALLTRIM(KEY(lnprovtag,"curcliproprecios"))," ",""))
+			lcexpresperada="STR(IDCLIPRO,10)+IIF(EMPTY(CODPRODPROV),STR(IDCLIPROP,10)+SPACE(70),UPPER(PADR(ALLTRIM(CODPRODPROV),80)))"
+			IF lcprovexpr<>lcexpresperada OR !CANDIDATE(lnprovtag,"curcliproprecios")
+				USE IN curcliproprecios
+				IF !EMPTY(lcaliasvalida)
+					SELECT (lcaliasvalida)
+				ENDIF
+				RETURN .F.
+			ENDIF
+		ENDIF
+		llmigraralias=(lncampoprov=0 OR lnprovtag=0)
+		USE IN curcliproprecios
+	ENDIF
+
+	IF llmigraralias
+		lcrespaldoalias=pcSysDir+pcdb+"\respaldo_alias_proveedor_"+STRTRAN(STRTRAN(STRTRAN(TTOC(DATETIME(),1),":",""),"-","")," ","_")
+		MD (lcrespaldoalias)
+		COPY FILE (pcSysDir+pcdb+"\masterdb.dbc") TO (lcrespaldoalias+"\masterdb.dbc")
+		IF FILE(pcSysDir+pcdb+"\masterdb.dct")
+			COPY FILE (pcSysDir+pcdb+"\masterdb.dct") TO (lcrespaldoalias+"\masterdb.dct")
+		ENDIF
+		IF FILE(pcSysDir+pcdb+"\masterdb.dcx")
+			COPY FILE (pcSysDir+pcdb+"\masterdb.dcx") TO (lcrespaldoalias+"\masterdb.dcx")
+		ENDIF
+		COPY FILE (pcSysDir+pcdb+"\cyvcliproPrecios.dbf") TO (lcrespaldoalias+"\cyvcliproPrecios.dbf")
+		IF FILE(pcSysDir+pcdb+"\cyvcliproPrecios.cdx")
+			COPY FILE (pcSysDir+pcdb+"\cyvcliproPrecios.cdx") TO (lcrespaldoalias+"\cyvcliproPrecios.cdx")
+		ENDIF
+
+		USE pcSysDir+pcdb+"\cyvcliproPrecios" IN 0 EXCLUSIVE ALIAS curcliproprecios
+		SELECT curcliproprecios
+		IF lncampoprov=0
+			ALTER TABLE cyvcliproPrecios ADD COLUMN codprodprov c(80) DEFAULT ''
+		ENDIF
+		IF lnprovtag=0
+			INDEX on STR(idclipro,10)+IIF(EMPTY(codprodprov),STR(idcliprop,10)+SPACE(70),UPPER(PADR(ALLTRIM(codprodprov),80))) TAG provcode CANDIDATE
+		ENDIF
+		USE IN curcliproprecios
+	ENDIF
 
 	IF !EMPTY(lcaliasvalida)
 		SELECT (lcaliasvalida)
