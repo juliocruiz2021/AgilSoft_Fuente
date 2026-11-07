@@ -1,12 +1,12 @@
 # Estado de trabajo VFP
 
-Fecha: 2026-11-05
-Rama: `feature/modulo-facturacion`
+Fecha: 2026-11-07
+Rama: `feature/dte-hacienda-nuevas-versiones`
 
 ## Objetivo actual
 
-Cobro rápido acepta ID interno, número de control o código de generación sin alterar las validaciones de CxC; la lógica quedó integrada en `Programas/varios2.prg` y el formulario oficial, sin dependencia de PRG externos. Respaldo `respaldos_codex/cobro_rapido_tres_identificadores_20261105-144304`; PRG y formulario compilan. No se modificaron datos reales.
-
+Caja/Bancos versión 5: `_movimientosbancarios` y `_cuentascobrarpagar` siguen en `Programas/varios2.prg`, sin `TRY/CATCH` incompatible con VFPOLEDB y con todos los campos obligatorios de `siskardexdoc`. Respaldos `banking_v3_vfpole_20261107-103000` y `banking_v4_numerofin_20261107-104500`; `varios2.prg` compila sin `.ERR`. Regresión aislada de movimiento, aplicación CxC y trigger contable PASS. `pruebasazure` quedó `WEB=3;BANK=5` con respaldo v7; no se creó ningún cobro real. Pendiente reintento manual.
+Pendiente de cierre SIGA: `frm_ven_rep_cierre` y `ven_cobros_clientes` compilan y la prueba del FRX pasa; VFP y auxiliares quedaron cerrados. Siguiente sesion: agregar el FRX al PJX y ejecutar build integral. Respaldo `filtros_ptv_caja_cobros_20261106-231402`; no se editaron datos.
 ## Correcciones de ventas 2026-11-05
 
 - `STATUS`: la ruta no nativa construia el `UPDATE` de cabecera desde `c_cyvventasdeta`; ahora toma `thisform.cboStatus.Value` sin alterar reglas funcionales.
@@ -117,4 +117,4 @@ Cobro rápido acepta ID interno, número de control o código de generación sin
 - Causas corregidas en `frm_ven_ventas.Procesar(51)`: al faltar el PDF local de un anulado se llamaba el reporte normal; `RELEASE lajsonnulo` dejaba la variable inexistente cuando `sisDTE.status=2` no devolvia filas; y tras intentar regenerar un JSON se ejecutaba `COPY FILE` aunque el archivo siguiera ausente.
 - Se agrego `t13.telefono` a los cursores de impresion; los anulados priorizan `sisDTE.status=2.pdf_path`; la invalidacion se lee mediante cursor manteniendo `lajsonnulo=''` cuando no existe; y ambas ramas validan `FILE(lcfileJSONOrigen)` tras regenerar, muestran aviso y continuan si Hacienda no produjo el archivo.
 - Respaldos: `respaldos_codex/anulados_regeneracion_pdf_20261105-103000` y `respaldos_codex/ventas_json_nulo_20261105-115852`. Regresion aislada con cero filas y con invalidacion existente PASS; formulario aislado y reconstruccion integral PASS, sin `.err`; `principal.exe` 36,310,420 bytes, SHA-256 `C2BD688723FCDDC40C5FBC07FE188D89F7D89197D1727FB691AA2CF68EDF6ED4`. Metadatos ajenos reescritos por el build se restauraron; no se modificaron DBF/DBC ni datos reales.
-- CYB Importar: en `Cajas/frm_cyb_movimientos_mod.scx` se retiraron 7 filtros invalidos a `siskardexdoc.anulado` (campo inexistente), conservando `status=1` y `eliminado=0`; respaldos `respaldos_codex/cyb_importar_sin_anulado_kardex_20261105-104500` y `respaldos_codex/principal_antes_cyb_importar_20261105-191917`; verificacion estatica 0 referencias y formulario compilado PASS sin `.err`. `principal.exe` aun es el anterior: el build fue bloqueado por `sistema.pjx` abierto; al retomar, cerrar el Administrador de proyectos, reconstruir el EXE y repetir Importar. No se modificaron datos.
+- CYB Importar: se retiraron 7 filtros invalidos a `siskardexdoc.anulado`, conservando `status=1` y `eliminado=0`; verificacion fresca del procedimiento `Importar`: 4 consultas, 0 referencias a `anulado`, PASS. Administrador de `sistema.pjx` cerrado y build integral PASS; `principal.exe` 36,311,134 bytes, SHA-256 `302BEB5FC10EBF1AEE72AC45F1249E2E59C04A5C13B85EB2446BFA5C5400145F`. Metadatos ajenos reescritos se respaldaron en `respaldos_codex/metadata_build_cyb_importar_20261106-054931` y restauraron a `HEAD`; respaldos fuente previos: `respaldos_codex/cyb_importar_sin_anulado_kardex_20261105-104500` y `respaldos_codex/principal_antes_cyb_importar_20261105-191917`. No se abrieron ni modificaron DBF/DBC o datos reales. Migracion API DBC v3 reducida: `Programas/varios2.prg` devuelve web 3/bancos 1; el paquete contiene solo ambos marcadores, `_cuentascobrarpagar` y `_movimientosbancarios`, sin ventas, kardex general, contabilidad ni cambios de triggers. Prueba aislada PASS (`OK|banking-stored-procedures-v3|3|banking-1`); no se creo ningun cobro real.

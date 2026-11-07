@@ -5178,7 +5178,8 @@ PROCEDURE _movimientosbancarios
 			ELSE
 				lnConRefCOMIns=0
 			ENDIF 
-			TRY 
+			* VFPOLEDB no admite TRY/CATCH dentro de procedimientos DBC.
+			* El error nativo se propaga y la API revierte su transaccion.
 				IF SEEK(lniddocCOMIns,'takardoc','iddocto')
 					UPDATE takardoc ; 
 								SET idtipodocto=cybmovimientos.idtipodocto,;
@@ -5220,12 +5221,12 @@ PROCEDURE _movimientosbancarios
 				ELSE
 					lncuentaold=RECCOUNT('takardoc')
 					INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
-											numero,fechadocto,fechavenci,idclipro,idagente,totaldocto,totaldoctotras,condipago,;
+											numero,numerofin,idseriefu,numerofu,fechadocto,fechavenci,idclipro,idagente,totaldocto,totaldoctotras,condipago,;
 											rentadocto,rentaabono,cargoabono,conreferencia,idseriechq,numerochq,nomcheque,;
 											turno,periodo,origen,ctrolcxcp,ctrolcyb,status,eliminado,fecalta,;
 											fecmod,fecactu,nodo,iduser,pcuser,presupuesto,ciclo);
 							VALUES (cybmovimientos.iddocto,cybmovimientos.idtipodocto,cybmovimientos.idserie,cybmovimientos.idcajban,;
-									cybmovimientos.idcajbantras,cybmovimientos.idsucursal,cybmovimientos.idctrocosto,cybmovimientos.numero,;
+									cybmovimientos.idcajbantras,cybmovimientos.idsucursal,cybmovimientos.idctrocosto,cybmovimientos.numero,'',0,'',;
 									cybmovimientos.fechadocto,cybmovimientos.fechadocto,cybmovimientos.idclipro,cybmovimientos.idagente,;
 									cybmovimientos.totaldocto,cybmovimientos.totaldoctotras,IIF(cybmovimientos.ctrolcxcp<>0,1,0),cybmovimientos.rentadocto,0,0,lnConRefCOMIns,;
 									cybmovimientos.idseriechq,cybmovimientos.numerochq,cybmovimientos.nomcheque,cybmovimientos.turno,;
@@ -5239,13 +5240,7 @@ PROCEDURE _movimientosbancarios
 					lcandCOMiNS=', '
 					llOkMOVBcos=.f.
 				ENDIF
-			CATCH TO lEx 
-				lcidMensComIns=lcidMensComIns+lcandCOMiNS+"Error " + TRANSFORM(lEx.Message)
-				lcandCOMiNS=', '
-				llOkMOVBcos=.f.
-			FINALLY
-				SELECT (lcidAliasComIns)
-			ENDTRY			 	
+			SELECT (lcidAliasComIns)
 		ENDIF 
 
 		IF llTaCajBanInsAbierta
@@ -5308,7 +5303,8 @@ PROCEDURE _cuentascobrarpagar
 			ELSE
 				lnConRefCOMIns=0
 			ENDIF 
-			TRY 
+			* VFPOLEDB no admite TRY/CATCH dentro de procedimientos DBC.
+			* El error nativo se propaga y la API revierte su transaccion.
 				IF SEEK(lniddocCOMIns,'takardoc','iddocto')
 					UPDATE takardoc ; 
 								SET idtipodocto=cyvcuentasxcp.idtipodocto,;
@@ -5340,17 +5336,17 @@ PROCEDURE _cuentascobrarpagar
 					lncuentacambios=_tally
 				ELSE
 					lntotalregistros=RECCOUNT('takardoc')
-					INSERT INTO takardoc (iddocto,idtipodocto,idserie,idsucursal,idctrocosto,;
-											numero,fechadocto,fechavenci,idclipro,idagente,totaldocto,condipago,;
-											rentadocto,rentaabono,cargoabono,conreferencia,;
-											turno,periodo,origen,ctrolcxcp,status,eliminado,fecalta,;
+					INSERT INTO takardoc (iddocto,idtipodocto,idserie,idcajban,idcajbantras,idsucursal,idctrocosto,;
+											numero,numerofin,idseriefu,numerofu,fechadocto,fechavenci,idclipro,idagente,totaldocto,totaldoctotras,condipago,;
+											rentadocto,rentaabono,cargoabono,conreferencia,idseriechq,numerochq,nomcheque,;
+											turno,periodo,origen,ctrolcxcp,ctrolcyb,status,eliminado,fecalta,;
 											fecmod,fecactu,nodo,iduser,pcuser);
-							VALUES (cyvcuentasxcp.iddocto,cyvcuentasxcp.idtipodocto,cyvcuentasxcp.idserie,;
-									cyvcuentasxcp.idsucursal,cyvcuentasxcp.idctrocosto,cyvcuentasxcp.numero,;
+							VALUES (cyvcuentasxcp.iddocto,cyvcuentasxcp.idtipodocto,cyvcuentasxcp.idserie,0,0,;
+									cyvcuentasxcp.idsucursal,cyvcuentasxcp.idctrocosto,cyvcuentasxcp.numero,'',0,'',;
 									cyvcuentasxcp.fechadocto,cyvcuentasxcp.fechavenci,cyvcuentasxcp.idclipro,cyvcuentasxcp.idagente,;
-									cyvcuentasxcp.totaldocto,1,cyvcuentasxcp.rentadocto,0,0,lnConRefCOMIns,;
+									cyvcuentasxcp.totaldocto,0,1,cyvcuentasxcp.rentadocto,0,0,lnConRefCOMIns,0,'','',;
 									cyvcuentasxcp.turno,cyvcuentasxcp.periodo,cyvcuentasxcp.origen,;
-									cyvcuentasxcp.ctrolcxcp,cyvcuentasxcp.status,cyvcuentasxcp.eliminado,cyvcuentasxcp.fecalta,;
+									cyvcuentasxcp.ctrolcxcp,0,cyvcuentasxcp.status,cyvcuentasxcp.eliminado,cyvcuentasxcp.fecalta,;
 									cyvcuentasxcp.fecmod,cyvcuentasxcp.fecactu,cyvcuentasxcp.nodo,cyvcuentasxcp.iduser,cyvcuentasxcp.pcuser)
 					lncuentacambios=RECCOUNT('takardoc')-lntotalregistros
 				ENDIF 
@@ -5360,13 +5356,7 @@ PROCEDURE _cuentascobrarpagar
 					lcandCOMiNS=', '
 					llOkMOVBcos=.f.
 				ENDIF
-			CATCH TO lEx 
-				lcidMensComIns=lcidMensComIns+lcandCOMiNS+"Error " + TRANSFORM(lEx.Message)
-				lcandCOMiNS=', '
-				llOkMOVBcos=.f.
-			FINALLY
-				SELECT (lcidAliasComIns)
-			ENDTRY			 	
+			SELECT (lcidAliasComIns)
 		ENDIF 
 
 		IF llTaCajBanInsAbierta
@@ -20420,7 +20410,11 @@ ENDPROC
 
 
 FUNCTION _api_sigawebversion
-    RETURN 2
+    RETURN 3
+ENDFUNC
+
+FUNCTION _api_sigabankingversion
+    RETURN 5
 ENDFUNC
 
 

@@ -9,3 +9,10 @@
 - Antes de pausar o cerrar una tarea, actualiza `WORK_STATUS.md` con objetivo, archivos, respaldos, pruebas y siguiente paso.
 - Manten `WORK_STATUS.md` vigente y por debajo de 120 lineas. Usa `CONTEXTO_CODEX.md` para decisiones duraderas e historial.
 
+## Regla inamovible de codigo VFP en runtime
+
+- No crear, invocar ni agregar al proyecto PRG externos para resolver logica del sistema. Toda funcion o procedimiento reutilizable de runtime debe quedar dentro de `Programas/varios.prg` o `Programas/varios2.prg`.
+- Formularios, clases y controles solo pueden contener la llamada y la logica estrictamente propia de su evento; la logica compartida debe delegarse a `varios.prg` o `varios2.prg`.
+- Los auxiliares de diagnostico, edicion o compilacion de Codex solo pueden existir bajo `.codex-work/`; nunca deben ser llamados por el sistema, agregados al PJX ni incluidos como dependencia de `principal.exe`.
+- Antes de compilar, buscar referencias nuevas a `.prg`, `DO`, `SET PROCEDURE` o funciones no incorporadas y confirmar que el runtime cumple esta regla. No hacer excepciones sin autorizacion explicita de Julio.
+

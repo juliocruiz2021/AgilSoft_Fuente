@@ -16654,20 +16654,6 @@ FUNCTION ValidarClientesDescuentosPorProducto()
 	ENDIF
 
 	IF llmigraralias
-		lcrespaldoalias=pcSysDir+pcdb+"\respaldo_alias_proveedor_"+STRTRAN(STRTRAN(STRTRAN(TTOC(DATETIME(),1),":",""),"-","")," ","_")
-		MD (lcrespaldoalias)
-		COPY FILE (pcSysDir+pcdb+"\masterdb.dbc") TO (lcrespaldoalias+"\masterdb.dbc")
-		IF FILE(pcSysDir+pcdb+"\masterdb.dct")
-			COPY FILE (pcSysDir+pcdb+"\masterdb.dct") TO (lcrespaldoalias+"\masterdb.dct")
-		ENDIF
-		IF FILE(pcSysDir+pcdb+"\masterdb.dcx")
-			COPY FILE (pcSysDir+pcdb+"\masterdb.dcx") TO (lcrespaldoalias+"\masterdb.dcx")
-		ENDIF
-		COPY FILE (pcSysDir+pcdb+"\cyvcliproPrecios.dbf") TO (lcrespaldoalias+"\cyvcliproPrecios.dbf")
-		IF FILE(pcSysDir+pcdb+"\cyvcliproPrecios.cdx")
-			COPY FILE (pcSysDir+pcdb+"\cyvcliproPrecios.cdx") TO (lcrespaldoalias+"\cyvcliproPrecios.cdx")
-		ENDIF
-
 		USE pcSysDir+pcdb+"\cyvcliproPrecios" IN 0 EXCLUSIVE ALIAS curcliproprecios
 		SELECT curcliproprecios
 		IF lncampoprov=0
@@ -45364,4 +45350,61 @@ FUNCTION ObtenerSemanaUnica(ldFecha)
     lnCodigoUnico = (lnAnioISO * 100) + lnSemana
 
     RETURN lnCodigoUnico
+ENDFUNC
+
+
+FUNCTION BuscarCodProveedorPorNRC(lnIdCon,lcNrcBuscar)
+	LOCAL lcNrcNormalizado,lcCodProveedor,lcAliasAnterior,lcSqlProveedor
+	LOCAL lnCtrlProveedor,loError
+
+	lcNrcNormalizado=SoloNumeros(NVL(lcNrcBuscar,""))
+	lcCodProveedor=""
+	lcAliasAnterior=ALIAS()
+	lnCtrlProveedor=0
+
+	IF EMPTY(lcNrcNormalizado)
+		RETURN lcCodProveedor
+	ENDIF
+
+	TRY
+		IF pnTipoConeccion=2
+			IF USED("c_BuscarProveedorNrc")
+				USE IN c_BuscarProveedorNrc
+			ENDIF
+			lcSqlProveedor="SELECT codclipro FROM cyvclipro "+;
+				"WHERE status=1 AND tipoclipro=2 AND "+;
+				"REPLACE(REPLACE(nrc,'-',''),' ','')='"+_sincomillias(lcNrcNormalizado)+"' "+;
+				"ORDER BY codclipro LIMIT 0,1"
+			lnCtrlProveedor=miSQLEXEC(lnIdCon,lcSqlProveedor,"c_BuscarProveedorNrc")
+			IF lnCtrlProveedor>0 AND USED("c_BuscarProveedorNrc") AND RECCOUNT("c_BuscarProveedorNrc")>0
+				GO TOP IN c_BuscarProveedorNrc
+				lcCodProveedor=ALLTRIM(c_BuscarProveedorNrc.codclipro)
+			ENDIF
+		ELSE
+			IF USED("c_BuscarProveedorNrcLocal")
+				USE IN c_BuscarProveedorNrcLocal
+			ENDIF
+			USE (pcSysDir+pcDB+"\cyvclipro") SHARED AGAIN IN 0 ALIAS c_BuscarProveedorNrcLocal
+			SELECT c_BuscarProveedorNrcLocal
+			LOCATE FOR status=1 AND tipoclipro=2 AND ;
+				SoloNumeros(ALLTRIM(NVL(nrc,"")))==m.lcNrcNormalizado
+			IF FOUND()
+				lcCodProveedor=ALLTRIM(codclipro)
+			ENDIF
+		ENDIF
+	CATCH TO loError
+		lcCodProveedor=""
+	FINALLY
+		IF USED("c_BuscarProveedorNrc")
+			USE IN c_BuscarProveedorNrc
+		ENDIF
+		IF USED("c_BuscarProveedorNrcLocal")
+			USE IN c_BuscarProveedorNrcLocal
+		ENDIF
+		IF !EMPTY(lcAliasAnterior) AND USED(lcAliasAnterior)
+			SELECT (lcAliasAnterior)
+		ENDIF
+	ENDTRY
+
+	RETURN lcCodProveedor
 ENDFUNC
